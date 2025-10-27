@@ -29,31 +29,21 @@
 
     <!-- Main Panel -->
     <div id="mainPanel">
-      <!-- SE Weekly Update Quick Action -->
-      <div id="seWeeklySection" class="section hidden">
-        <button id="seWeeklyBtn" class="btn btn-success btn-full">
+      <!-- Quick Actions (conditionally shown) -->
+      <div id="quickActionsSection" class="section hidden">
+        <label>Quick Actions:</label>
+        <button id="seWeeklyBtn" class="btn btn-success btn-full hidden">
           📝 Complete SE Weekly Update
         </button>
-        <div id="seCurrentValue" class="field-value hidden"></div>
       </div>
 
-      <!-- Additional Context -->
-      <div id="contextSection" class="section hidden">
-        <label for="promptInput">Additional Context (Optional):</label>
-        <textarea
-          id="promptInput"
-          placeholder="Add any additional context or instructions for completing the SE weekly update..."
-          rows="4"
-        ></textarea>
-      </div>
-
-      <!-- Chat Section -->
-      <div id="chatSection" class="section hidden">
+      <!-- Chat Section (always visible) -->
+      <div id="chatSection" class="section">
         <div id="chatMessages" class="chat-messages"></div>
         <div class="chat-input-container">
           <textarea
             id="chatInput"
-            placeholder="Type your response to Vera..."
+            placeholder="Ask Vera anything..."
             rows="3"
           ></textarea>
           <div class="button-group">

@@ -4,6 +4,8 @@ let veraEndpoint = 'http://localhost:8000';
 let conversationHistory = [];
 let userInitials = null;
 let latestCompleteUpdate = null;
+let seWeeklyUpdateAvailable = false;
+let seCurrentValue = '';
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -15,6 +17,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check if SE Weekly Update field exists on the page
   await checkSEWeeklyUpdate();
+
+  // Focus on chat input
+  document.getElementById('chatInput').focus();
 });
 
 // Load settings from storage
@@ -115,18 +120,14 @@ async function checkSEWeeklyUpdate() {
         }
 
         if (response && response.exists) {
-          // Show the SE Weekly Update section
-          document.getElementById('seWeeklySection').classList.remove('hidden');
+          // Mark as available
+          seWeeklyUpdateAvailable = true;
+          seCurrentValue = response.currentValue || '';
+          userInitials = response.userInitials;
 
-          // Show the context section
-          document.getElementById('contextSection').classList.remove('hidden');
-
-          // Show current value if it exists
-          if (response.currentValue) {
-            const seCurrentValue = document.getElementById('seCurrentValue');
-            seCurrentValue.textContent = 'Current: ' + response.currentValue.substring(0, 100) + (response.currentValue.length > 100 ? '...' : '');
-            seCurrentValue.classList.remove('hidden');
-          }
+          // Show the quick actions section and SE button
+          document.getElementById('quickActionsSection').classList.remove('hidden');
+          document.getElementById('seWeeklyBtn').classList.remove('hidden');
         }
       }
     );
@@ -135,59 +136,34 @@ async function checkSEWeeklyUpdate() {
   }
 }
 
-// Complete SE Weekly Update
+// Complete SE Weekly Update (quick action)
 async function completeSEWeeklyUpdate() {
   try {
-    // Show loading status
-    showStatus('Getting current SE update...', 'loading');
+    // Build the initial prompt
+    let prompt = 'Please complete my SE weekly update.';
 
-    // Get current field value
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (userInitials) {
+      prompt += `\n\nMy initials are: ${userInitials}`;
+    }
 
-    chrome.tabs.sendMessage(
-      tab.id,
-      { action: 'checkSEWeeklyUpdate' },
-      async (response) => {
-        if (chrome.runtime.lastError || !response || !response.exists) {
-          showStatus('SE Weekly Update field not found', 'error');
-          return;
-        }
+    if (seCurrentValue) {
+      prompt += `\n\nCurrent content:\n${seCurrentValue}`;
+    }
 
-        const currentValue = response.currentValue || '';
-        const additionalContext = document.getElementById('promptInput').value.trim();
-        userInitials = response.userInitials;
-
-        // Build the initial prompt
-        let prompt = 'Please complete my SE weekly update.';
-
-        if (userInitials) {
-          prompt += `\n\nMy initials are: ${userInitials}`;
-        }
-
-        if (additionalContext) {
-          prompt += `\n\nAdditional context:\n${additionalContext}`;
-        }
-
-        if (currentValue) {
-          prompt += `\n\nCurrent content:\n${currentValue}`;
-        }
-
-        // Initialize conversation with this first message
-        conversationHistory = [
-          {
-            role: 'user',
-            content: prompt
-          }
-        ];
-
-        // Get response from Vera
-        const assistantMessage = await callVera();
-
-        if (assistantMessage) {
-          handleVeraResponse(assistantMessage);
-        }
+    // Initialize conversation with this first message
+    conversationHistory = [
+      {
+        role: 'user',
+        content: prompt
       }
-    );
+    ];
+
+    // Get response from Vera
+    const assistantMessage = await callVera();
+
+    if (assistantMessage) {
+      handleVeraResponse(assistantMessage);
+    }
   } catch (error) {
     showStatus('Error: ' + error.message, 'error');
   }
@@ -235,30 +211,15 @@ async function callVera() {
 
 // Handle Vera's response (smart logic)
 function handleVeraResponse(response) {
-  // Check if response starts with [Summary of Opportunity]
-  if (response.trim().startsWith('[Summary of Opportunity]')) {
+  // Add to chat
+  addChatMessage('assistant', response);
+
+  // Check if response starts with [Summary of Opportunity] and SE field is available
+  if (response.trim().startsWith('[Summary of Opportunity]') && seWeeklyUpdateAvailable) {
     latestCompleteUpdate = response;
-
-    // If we're already in chat mode, show the commit button
-    if (!document.getElementById('chatSection').classList.contains('hidden')) {
-      addChatMessage('assistant', response);
-      document.getElementById('commitBtn').classList.remove('hidden');
-    } else {
-      // First response and it's complete - insert directly into page
-      insertUpdateIntoPage(response);
-    }
-  } else {
-    // Follow-up question - show chat interface
-    showChatInterface();
-    addChatMessage('assistant', response);
+    // Show commit button for SE updates
+    document.getElementById('commitBtn').classList.remove('hidden');
   }
-}
-
-// Show chat interface
-function showChatInterface() {
-  document.getElementById('seWeeklySection').classList.add('hidden');
-  document.getElementById('contextSection').classList.add('hidden');
-  document.getElementById('chatSection').classList.remove('hidden');
 }
 
 // Add a message to the chat
@@ -267,20 +228,52 @@ function addChatMessage(role, content) {
   const messageDiv = document.createElement('div');
   messageDiv.className = `chat-message ${role}`;
 
+  const header = document.createElement('div');
+  header.className = 'chat-header';
+
   const label = document.createElement('div');
   label.className = 'chat-label';
   label.textContent = role === 'user' ? 'You' : 'Vera';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'copy-btn';
+  copyBtn.textContent = '📋';
+  copyBtn.title = 'Copy to clipboard';
+  copyBtn.onclick = () => copyToClipboard(content, copyBtn);
+
+  header.appendChild(label);
+  header.appendChild(copyBtn);
 
   const text = document.createElement('div');
   text.className = 'chat-text';
   text.textContent = content;
 
-  messageDiv.appendChild(label);
+  messageDiv.appendChild(header);
   messageDiv.appendChild(text);
   chatMessages.appendChild(messageDiv);
 
   // Scroll to bottom
   chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Copy text to clipboard
+async function copyToClipboard(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const originalText = button.textContent;
+    button.textContent = '✓';
+    button.classList.add('copied');
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.classList.remove('copied');
+    }, 2000);
+  } catch (error) {
+    console.error('Failed to copy:', error);
+    button.textContent = '✗';
+    setTimeout(() => {
+      button.textContent = '📋';
+    }, 2000);
+  }
 }
 
 // Send chat message
