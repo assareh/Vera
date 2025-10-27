@@ -1,6 +1,9 @@
 // Popup script for Vera Assistant
 
 let veraEndpoint = 'http://localhost:8000';
+let conversationHistory = [];
+let userInitials = null;
+let latestCompleteUpdate = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
@@ -54,6 +57,16 @@ function setupEventListeners() {
 
   // SE Weekly Update
   document.getElementById('seWeeklyBtn').addEventListener('click', completeSEWeeklyUpdate);
+
+  // Chat
+  document.getElementById('sendChatBtn').addEventListener('click', sendChatMessage);
+  document.getElementById('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+  document.getElementById('commitBtn').addEventListener('click', commitUpdate);
 }
 
 // Toggle settings panel
@@ -142,9 +155,9 @@ async function completeSEWeeklyUpdate() {
 
         const currentValue = response.currentValue || '';
         const additionalContext = document.getElementById('promptInput').value.trim();
-        const userInitials = response.userInitials;
+        userInitials = response.userInitials;
 
-        // Build the prompt
+        // Build the initial prompt
         let prompt = 'Please complete my SE weekly update.';
 
         if (userInitials) {
@@ -159,63 +172,178 @@ async function completeSEWeeklyUpdate() {
           prompt += `\n\nCurrent content:\n${currentValue}`;
         }
 
-        showStatus('Sending to Vera...', 'loading');
-
-        try {
-          // Call Vera API
-          const veraResponse = await fetch(`${veraEndpoint}/v1/chat/completions`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              messages: [
-                {
-                  role: 'user',
-                  content: prompt
-                }
-              ],
-              temperature: 0.7,
-              stream: false
-            })
-          });
-
-          if (!veraResponse.ok) {
-            throw new Error(`HTTP error! status: ${veraResponse.status}`);
+        // Initialize conversation with this first message
+        conversationHistory = [
+          {
+            role: 'user',
+            content: prompt
           }
+        ];
 
-          const data = await veraResponse.json();
-          const completedUpdate = data.choices[0].message.content;
+        // Get response from Vera
+        const assistantMessage = await callVera();
 
-          showStatus('Inserting into field...', 'loading');
-
-          // Insert into the field
-          chrome.tabs.sendMessage(
-            tab.id,
-            {
-              action: 'fillSEWeeklyUpdate',
-              text: completedUpdate
-            },
-            (fillResponse) => {
-              if (chrome.runtime.lastError || !fillResponse || !fillResponse.success) {
-                showStatus('Failed to insert text', 'error');
-                return;
-              }
-
-              showStatus('SE Weekly Update completed successfully!', 'success');
-              setTimeout(() => {
-                window.close();
-              }, 1500);
-            }
-          );
-
-        } catch (error) {
-          showStatus(`Error: ${error.message}. Make sure Vera is running on ${veraEndpoint}`, 'error');
-          console.error('Error calling Vera:', error);
+        if (assistantMessage) {
+          handleVeraResponse(assistantMessage);
         }
       }
     );
   } catch (error) {
     showStatus('Error: ' + error.message, 'error');
+  }
+}
+
+// Call Vera API with current conversation history
+async function callVera() {
+  try {
+    showStatus('Sending to Vera...', 'loading');
+
+    const veraResponse = await fetch(`${veraEndpoint}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messages: conversationHistory,
+        temperature: 0.7,
+        stream: false
+      })
+    });
+
+    if (!veraResponse.ok) {
+      throw new Error(`HTTP error! status: ${veraResponse.status}`);
+    }
+
+    const data = await veraResponse.json();
+    const assistantMessage = data.choices[0].message.content;
+
+    // Add assistant response to history
+    conversationHistory.push({
+      role: 'assistant',
+      content: assistantMessage
+    });
+
+    hideStatus();
+    return assistantMessage;
+
+  } catch (error) {
+    showStatus(`Error: ${error.message}. Make sure Vera is running on ${veraEndpoint}`, 'error');
+    console.error('Error calling Vera:', error);
+    return null;
+  }
+}
+
+// Handle Vera's response (smart logic)
+function handleVeraResponse(response) {
+  // Check if response starts with [Summary of Opportunity]
+  if (response.trim().startsWith('[Summary of Opportunity]')) {
+    latestCompleteUpdate = response;
+
+    // If we're already in chat mode, show the commit button
+    if (!document.getElementById('chatSection').classList.contains('hidden')) {
+      addChatMessage('assistant', response);
+      document.getElementById('commitBtn').classList.remove('hidden');
+    } else {
+      // First response and it's complete - insert directly into page
+      insertUpdateIntoPage(response);
+    }
+  } else {
+    // Follow-up question - show chat interface
+    showChatInterface();
+    addChatMessage('assistant', response);
+  }
+}
+
+// Show chat interface
+function showChatInterface() {
+  document.getElementById('seWeeklySection').classList.add('hidden');
+  document.getElementById('contextSection').classList.add('hidden');
+  document.getElementById('chatSection').classList.remove('hidden');
+}
+
+// Add a message to the chat
+function addChatMessage(role, content) {
+  const chatMessages = document.getElementById('chatMessages');
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `chat-message ${role}`;
+
+  const label = document.createElement('div');
+  label.className = 'chat-label';
+  label.textContent = role === 'user' ? 'You' : 'Vera';
+
+  const text = document.createElement('div');
+  text.className = 'chat-text';
+  text.textContent = content;
+
+  messageDiv.appendChild(label);
+  messageDiv.appendChild(text);
+  chatMessages.appendChild(messageDiv);
+
+  // Scroll to bottom
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Send chat message
+async function sendChatMessage() {
+  const chatInput = document.getElementById('chatInput');
+  const message = chatInput.value.trim();
+
+  if (!message) return;
+
+  // Add user message to chat
+  addChatMessage('user', message);
+  chatInput.value = '';
+
+  // Add to conversation history
+  conversationHistory.push({
+    role: 'user',
+    content: message
+  });
+
+  // Get response from Vera
+  const assistantMessage = await callVera();
+
+  if (assistantMessage) {
+    handleVeraResponse(assistantMessage);
+  }
+}
+
+// Commit update to page
+async function commitUpdate() {
+  if (!latestCompleteUpdate) {
+    showStatus('No complete update to commit', 'error');
+    return;
+  }
+
+  insertUpdateIntoPage(latestCompleteUpdate);
+}
+
+// Insert update into the page
+async function insertUpdateIntoPage(text) {
+  try {
+    showStatus('Inserting into field...', 'loading');
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    chrome.tabs.sendMessage(
+      tab.id,
+      {
+        action: 'fillSEWeeklyUpdate',
+        text: text
+      },
+      (fillResponse) => {
+        if (chrome.runtime.lastError || !fillResponse || !fillResponse.success) {
+          showStatus('Failed to insert text', 'error');
+          return;
+        }
+
+        showStatus('SE Weekly Update completed successfully!', 'success');
+        setTimeout(() => {
+          window.close();
+        }, 1500);
+      }
+    );
+  } catch (error) {
+    showStatus('Error inserting text: ' + error.message, 'error');
   }
 }

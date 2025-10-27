@@ -47,6 +47,22 @@
         ></textarea>
       </div>
 
+      <!-- Chat Section -->
+      <div id="chatSection" class="section hidden">
+        <div id="chatMessages" class="chat-messages"></div>
+        <div class="chat-input-container">
+          <textarea
+            id="chatInput"
+            placeholder="Type your response to Vera..."
+            rows="3"
+          ></textarea>
+          <div class="button-group">
+            <button id="sendChatBtn" class="btn btn-primary">Send</button>
+            <button id="commitBtn" class="btn btn-success hidden">Commit to Page</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Status -->
       <div id="statusSection" class="section hidden">
         <div class="status" id="statusText"></div>
