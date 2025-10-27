@@ -142,9 +142,14 @@ async function completeSEWeeklyUpdate() {
 
         const currentValue = response.currentValue || '';
         const additionalContext = document.getElementById('promptInput').value.trim();
+        const userInitials = response.userInitials;
 
         // Build the prompt
         let prompt = 'Please complete my SE weekly update.';
+
+        if (userInitials) {
+          prompt += `\n\nMy initials are: ${userInitials}`;
+        }
 
         if (additionalContext) {
           prompt += `\n\nAdditional context:\n${additionalContext}`;

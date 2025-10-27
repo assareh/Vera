@@ -10,9 +10,13 @@ function init() {
       // Check if SE Weekly Update field exists
       const seField = document.getElementById('SE_Weekly_Update__c');
       if (seField) {
+        // Try to get user initials from the avatar bubble
+        const userInitials = getUserInitials();
+
         sendResponse({
           exists: true,
-          currentValue: seField.value || ''
+          currentValue: seField.value || '',
+          userInitials: userInitials
         });
       } else {
         sendResponse({ exists: false });
@@ -29,6 +33,21 @@ function init() {
     }
     return true; // Keep channel open for async response
   });
+}
+
+// Get user initials from the avatar bubble
+function getUserInitials() {
+  try {
+    // Look for element with both classes
+    const avatarBubble = document.querySelector('.member-names__bubble.avatar-bg-2');
+    if (avatarBubble && avatarBubble.textContent) {
+      return avatarBubble.textContent.trim();
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting user initials:', error);
+    return null;
+  }
 }
 
 // Insert text into a field
