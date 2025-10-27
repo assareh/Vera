@@ -1,7 +1,5 @@
 // Popup script for Vera Assistant
 
-let selectedFieldInfo = null;
-let currentResponse = null;
 let veraEndpoint = 'http://localhost:8000';
 
 // Initialize
@@ -14,9 +12,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check if SE Weekly Update field exists on the page
   await checkSEWeeklyUpdate();
-
-  // Check if a field is already selected
-  await checkSelectedField();
 });
 
 // Load settings from storage
@@ -59,26 +54,6 @@ function setupEventListeners() {
 
   // SE Weekly Update
   document.getElementById('seWeeklyBtn').addEventListener('click', completeSEWeeklyUpdate);
-
-  // Field selection
-  document.getElementById('selectFieldBtn').addEventListener('click', selectField);
-
-  // Prompt
-  document.getElementById('promptInput').addEventListener('input', updateSendButton);
-  document.getElementById('sendBtn').addEventListener('click', sendToVera);
-
-  // Response actions
-  document.getElementById('copyBtn').addEventListener('click', copyResponse);
-  document.getElementById('insertBtn').addEventListener('click', insertResponse);
-
-  // Listen for field selection messages
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'fieldSelected') {
-      handleFieldSelected(request.fieldInfo);
-    } else if (request.action === 'selectionCancelled') {
-      showStatus('Field selection cancelled', 'error');
-    }
-  });
 }
 
 // Toggle settings panel
@@ -95,193 +70,6 @@ function toggleSettings() {
   }
 }
 
-// Check if a field is already selected
-async function checkSelectedField() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    chrome.tabs.sendMessage(
-      tab.id,
-      { action: 'getSelectedField' },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.log('Content script not ready yet');
-          return;
-        }
-
-        if (response && response.hasSelection) {
-          handleFieldSelected(response.fieldInfo);
-        }
-      }
-    );
-  } catch (error) {
-    console.error('Error checking selected field:', error);
-  }
-}
-
-// Select a field
-async function selectField() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    chrome.tabs.sendMessage(
-      tab.id,
-      { action: 'selectField' },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          showStatus('Error: Content script not loaded. Please refresh the page.', 'error');
-          return;
-        }
-
-        if (response && response.success) {
-          showStatus('Click on a field in the page...', 'loading');
-          // The popup will be closed, so the user will see the field selection overlay
-        }
-      }
-    );
-  } catch (error) {
-    showStatus('Error selecting field: ' + error.message, 'error');
-  }
-}
-
-// Handle field selected
-function handleFieldSelected(fieldInfo) {
-  selectedFieldInfo = fieldInfo;
-
-  // Update UI
-  document.getElementById('selectedFieldInfo').classList.remove('hidden');
-  document.getElementById('fieldLabel').textContent = fieldInfo.label || 'Unnamed field';
-
-  if (fieldInfo.currentValue) {
-    document.getElementById('fieldValue').textContent = fieldInfo.currentValue;
-    document.getElementById('fieldValue').classList.remove('hidden');
-  } else {
-    document.getElementById('fieldValue').classList.add('hidden');
-  }
-
-  // Update send button state
-  updateSendButton();
-
-  // Hide status
-  hideStatus();
-}
-
-// Update send button state
-function updateSendButton() {
-  const promptInput = document.getElementById('promptInput');
-  const sendBtn = document.getElementById('sendBtn');
-
-  if (selectedFieldInfo && promptInput.value.trim()) {
-    sendBtn.disabled = false;
-  } else {
-    sendBtn.disabled = true;
-  }
-}
-
-// Send prompt to Vera
-async function sendToVera() {
-  const prompt = document.getElementById('promptInput').value.trim();
-
-  if (!prompt || !selectedFieldInfo) {
-    return;
-  }
-
-  // Build the message
-  let message = prompt;
-
-  if (selectedFieldInfo.currentValue) {
-    message += `\n\nCurrent field value:\n${selectedFieldInfo.currentValue}`;
-  }
-
-  // Show loading status
-  showStatus('Sending to Vera...', 'loading');
-
-  try {
-    // Call Vera API
-    const response = await fetch(`${veraEndpoint}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messages: [
-          {
-            role: 'user',
-            content: message
-          }
-        ],
-        temperature: 0.7,
-        stream: false
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const assistantMessage = data.choices[0].message.content;
-
-    // Display response
-    currentResponse = assistantMessage;
-    document.getElementById('responseText').textContent = assistantMessage;
-    document.getElementById('responseSection').classList.remove('hidden');
-
-    // Hide status
-    hideStatus();
-
-  } catch (error) {
-    showStatus(`Error: ${error.message}. Make sure Vera is running on ${veraEndpoint}`, 'error');
-    console.error('Error calling Vera:', error);
-  }
-}
-
-// Copy response to clipboard
-async function copyResponse() {
-  if (!currentResponse) return;
-
-  try {
-    await navigator.clipboard.writeText(currentResponse);
-    showStatus('Copied to clipboard!', 'success');
-    setTimeout(hideStatus, 2000);
-  } catch (error) {
-    showStatus('Failed to copy to clipboard', 'error');
-  }
-}
-
-// Insert response into field
-async function insertResponse() {
-  if (!currentResponse || !selectedFieldInfo) return;
-
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-    chrome.tabs.sendMessage(
-      tab.id,
-      {
-        action: 'insertText',
-        text: currentResponse
-      },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          showStatus('Error: Could not insert text', 'error');
-          return;
-        }
-
-        if (response && response.success) {
-          showStatus('Text inserted successfully!', 'success');
-          setTimeout(() => {
-            window.close();
-          }, 1000);
-        } else {
-          showStatus('Failed to insert text', 'error');
-        }
-      }
-    );
-  } catch (error) {
-    showStatus('Error inserting text: ' + error.message, 'error');
-  }
-}
 
 // Show status message
 function showStatus(message, type) {
@@ -317,6 +105,9 @@ async function checkSEWeeklyUpdate() {
           // Show the SE Weekly Update section
           document.getElementById('seWeeklySection').classList.remove('hidden');
 
+          // Show the context section
+          document.getElementById('contextSection').classList.remove('hidden');
+
           // Show current value if it exists
           if (response.currentValue) {
             const seCurrentValue = document.getElementById('seCurrentValue');
@@ -350,9 +141,15 @@ async function completeSEWeeklyUpdate() {
         }
 
         const currentValue = response.currentValue || '';
+        const additionalContext = document.getElementById('promptInput').value.trim();
 
         // Build the prompt
         let prompt = 'Please complete my SE weekly update.';
+
+        if (additionalContext) {
+          prompt += `\n\nAdditional context:\n${additionalContext}`;
+        }
+
         if (currentValue) {
           prompt += `\n\nCurrent content:\n${currentValue}`;
         }

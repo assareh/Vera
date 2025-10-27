@@ -37,44 +37,14 @@
         <div id="seCurrentValue" class="field-value hidden"></div>
       </div>
 
-      <!-- Field Selection -->
-      <div id="fieldSelection" class="section">
-        <button id="selectFieldBtn" class="btn btn-primary btn-full">
-          Select Field on Page
-        </button>
-        <div id="selectedFieldInfo" class="hidden">
-          <div class="field-info">
-            <strong>Selected:</strong>
-            <span id="fieldLabel"></span>
-          </div>
-          <div class="field-value" id="fieldValue"></div>
-        </div>
-      </div>
-
-      <!-- Prompt Input -->
-      <div id="promptSection" class="section">
-        <label for="promptInput">Your Prompt:</label>
+      <!-- Additional Context -->
+      <div id="contextSection" class="section hidden">
+        <label for="promptInput">Additional Context (Optional):</label>
         <textarea
           id="promptInput"
-          placeholder="What would you like Vera to write? The current field value will be included as context."
+          placeholder="Add any additional context or instructions for completing the SE weekly update..."
           rows="4"
         ></textarea>
-
-        <button id="sendBtn" class="btn btn-primary btn-full" disabled>
-          Send to Vera
-        </button>
-      </div>
-
-      <!-- Response Display -->
-      <div id="responseSection" class="section hidden">
-        <div class="response-header">
-          <label>Response:</label>
-          <button id="copyBtn" class="btn btn-secondary btn-sm">Copy</button>
-        </div>
-        <div id="responseText" class="response-text"></div>
-        <button id="insertBtn" class="btn btn-success btn-full">
-          Insert into Field
-        </button>
       </div>
 
       <!-- Status -->
