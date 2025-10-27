@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vera Assistant</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <h1>Vera Assistant</h1>
+      <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+    </div>
+
+    <!-- Settings Panel (hidden by default) -->
+    <div id="settingsPanel" class="settings-panel hidden">
+      <h3>Settings</h3>
+      <div class="form-group">
+        <label for="veraEndpoint">Vera Endpoint:</label>
+        <input type="text" id="veraEndpoint" placeholder="http://localhost:8000">
+      </div>
+      <div class="button-group">
+        <button id="saveSettings" class="btn btn-primary">Save</button>
+        <button id="cancelSettings" class="btn btn-secondary">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Main Panel -->
+    <div id="mainPanel">
+      <!-- Field Selection -->
+      <div id="fieldSelection" class="section">
+        <button id="selectFieldBtn" class="btn btn-primary btn-full">
+          Select Field on Page
+        </button>
+        <div id="selectedFieldInfo" class="hidden">
+          <div class="field-info">
+            <strong>Selected:</strong>
+            <span id="fieldLabel"></span>
+          </div>
+          <div class="field-value" id="fieldValue"></div>
+        </div>
+      </div>
+
+      <!-- Prompt Input -->
+      <div id="promptSection" class="section">
+        <label for="promptInput">Your Prompt:</label>
+        <textarea
+          id="promptInput"
+          placeholder="What would you like Vera to write? The current field value will be included as context."
+          rows="4"
+        ></textarea>
+
+        <button id="sendBtn" class="btn btn-primary btn-full" disabled>
+          Send to Vera
+        </button>
+      </div>
+
+      <!-- Response Display -->
+      <div id="responseSection" class="section hidden">
+        <div class="response-header">
+          <label>Response:</label>
+          <button id="copyBtn" class="btn btn-secondary btn-sm">Copy</button>
+        </div>
+        <div id="responseText" class="response-text"></div>
+        <button id="insertBtn" class="btn btn-success btn-full">
+          Insert into Field
+        </button>
+      </div>
+
+      <!-- Status -->
+      <div id="statusSection" class="section hidden">
+        <div class="status" id="statusText"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

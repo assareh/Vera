@@ -1,0 +1,11 @@
+flask==3.0.0
+flask-cors==4.0.0
+langchain==0.1.0
+langchain-community==0.0.13
+requests==2.31.0
+python-dotenv==1.0.0
+click==8.1.7
+
+# Optional: Install open-webui separately if you want the Web UI
+# Note: open-webui requires Python 3.11-3.12
+# pip install open-webui
