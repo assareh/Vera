@@ -27,6 +27,26 @@ function init() {
     } else if (request.action === 'cancelSelection') {
       cancelFieldSelection();
       sendResponse({ success: true });
+    } else if (request.action === 'checkSEWeeklyUpdate') {
+      // Check if SE Weekly Update field exists
+      const seField = document.getElementById('SE_Weekly_Update__c');
+      if (seField) {
+        sendResponse({
+          exists: true,
+          currentValue: seField.value || ''
+        });
+      } else {
+        sendResponse({ exists: false });
+      }
+    } else if (request.action === 'fillSEWeeklyUpdate') {
+      // Fill the SE Weekly Update field
+      const seField = document.getElementById('SE_Weekly_Update__c');
+      if (seField) {
+        insertTextIntoField(seField, request.text);
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'SE Weekly Update field not found' });
+      }
     }
     return true; // Keep channel open for async response
   });
