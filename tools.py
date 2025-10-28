@@ -33,6 +33,192 @@ class NotesSearchInput(BaseModel):
     query: str = Field(description="The search query to find in notes")
 
 
+class CustomerNotesSearchInput(BaseModel):
+    """Input schema for customer notes search tool."""
+    customer_name: str = Field(
+        default="",
+        description="The customer/account name to search for (e.g., 'Adobe', 'Microsoft'). Leave empty to search all customers."
+    )
+    content_query: str = Field(
+        default="",
+        description="Search for specific content within meeting notes. Leave empty to just list notes."
+    )
+    limit: int = Field(
+        default=10,
+        description="Maximum number of results to return. Default is 10, max is 50."
+    )
+    sort_by_date: bool = Field(
+        default=True,
+        description="Sort results by date (newest first). Default is True."
+    )
+
+
+class ReadCustomerNoteInput(BaseModel):
+    """Input schema for reading a customer note file."""
+    file_path: str = Field(
+        description="The relative path to the note file within Customer_Notes directory (e.g., 'A/Adobe/10_Meetings/2025-01-15_Discovery_Call.md')"
+    )
+
+
+def search_customer_notes(
+    customer_name: str = "",
+    content_query: str = "",
+    limit: int = 10,
+    sort_by_date: bool = True
+) -> str:
+    """Search through customer meeting notes.
+
+    This tool searches the hierarchical customer notes directory structure
+    (Customer_Notes/[A-Z,0-9]/[Customer]/10_Meetings/*.md) to find relevant
+    meeting notes.
+
+    Args:
+        customer_name: Filter by customer/account name (case-insensitive)
+        content_query: Search for specific content within notes
+        limit: Maximum number of results to return (default 10, max 50)
+        sort_by_date: Sort by date, newest first (default True)
+
+    Returns:
+        A formatted string with matching notes, their paths, dates, and previews
+    """
+    notes_path = Path(config.CUSTOMER_NOTES_DIR)
+
+    if not notes_path.exists():
+        return (
+            f"Customer notes directory '{config.CUSTOMER_NOTES_DIR}' does not exist.\n\n"
+            f"To set up customer notes:\n"
+            f"1. Create a symlink: ln -s /path/to/your/Customer_Notes {config.CUSTOMER_NOTES_DIR}\n"
+            f"2. Or set CUSTOMER_NOTES_DIR environment variable to your notes path"
+        )
+
+    # Limit results
+    limit = min(max(1, limit), 50)
+
+    results: List[Dict[str, Any]] = []
+
+    # Search through the hierarchical structure
+    # Pattern: Customer_Notes/[Letter]/[Customer]/10_Meetings/*.md
+    for letter_dir in notes_path.iterdir():
+        if not letter_dir.is_dir():
+            continue
+
+        for customer_dir in letter_dir.iterdir():
+            if not customer_dir.is_dir():
+                continue
+
+            # Filter by customer name if provided
+            if customer_name and customer_name.lower() not in customer_dir.name.lower():
+                continue
+
+            # Look for meetings directory (could be "10_Meetings" or similar)
+            meetings_dirs = [d for d in customer_dir.iterdir() if d.is_dir() and "meeting" in d.name.lower()]
+
+            for meetings_dir in meetings_dirs:
+                # Search through markdown files
+                for file_path in meetings_dir.glob("*.md"):
+                    try:
+                        content = file_path.read_text(encoding="utf-8")
+
+                        # If content query is provided, check if it matches
+                        if content_query and content_query.lower() not in content.lower():
+                            continue
+
+                        # Extract date from filename if possible (format: YYYY-MM-DD_...)
+                        date_str = ""
+                        import re
+                        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', file_path.name)
+                        if date_match:
+                            date_str = date_match.group(1)
+
+                        # Get relative path from Customer_Notes
+                        relative_path = file_path.relative_to(notes_path)
+
+                        # Get first few lines as preview
+                        preview_lines = content.split('\n')[:5]
+                        preview = '\n'.join(line for line in preview_lines if line.strip())
+
+                        results.append({
+                            "customer": customer_dir.name,
+                            "file": str(relative_path),
+                            "full_path": str(file_path),
+                            "date": date_str,
+                            "preview": preview[:200] + "..." if len(preview) > 200 else preview
+                        })
+
+                    except Exception as e:
+                        # Skip files that can't be read
+                        continue
+
+    if not results:
+        search_terms = []
+        if customer_name:
+            search_terms.append(f"customer '{customer_name}'")
+        if content_query:
+            search_terms.append(f"content '{content_query}'")
+
+        if search_terms:
+            return f"No customer meeting notes found matching {' and '.join(search_terms)}."
+        else:
+            return "No customer meeting notes found in the directory."
+
+    # Sort by date if requested
+    if sort_by_date:
+        results.sort(key=lambda x: x["date"], reverse=True)
+
+    # Limit results
+    results = results[:limit]
+
+    # Format output
+    output = [f"Found {len(results)} customer meeting note(s):\n"]
+
+    for idx, result in enumerate(results, 1):
+        output.append(f"\n{idx}. [{result['customer']}] {result['file']}")
+        if result['date']:
+            output.append(f"   Date: {result['date']}")
+        output.append(f"   Preview: {result['preview']}")
+        output.append("")
+
+    output.append(f"\nTo read full content, use read_customer_note with the file path.")
+
+    return "\n".join(output)
+
+
+def read_customer_note(file_path: str) -> str:
+    """Read the full content of a customer meeting note.
+
+    Args:
+        file_path: Relative path from Customer_Notes directory
+                  (e.g., 'A/Adobe/10_Meetings/2025-01-15_Discovery_Call.md')
+
+    Returns:
+        The full content of the note file
+    """
+    notes_path = Path(config.CUSTOMER_NOTES_DIR)
+
+    if not notes_path.exists():
+        return (
+            f"Customer notes directory '{config.CUSTOMER_NOTES_DIR}' does not exist.\n\n"
+            f"To set up customer notes:\n"
+            f"1. Create a symlink: ln -s /path/to/your/Customer_Notes {config.CUSTOMER_NOTES_DIR}\n"
+            f"2. Or set CUSTOMER_NOTES_DIR environment variable to your notes path"
+        )
+
+    # Construct full path
+    full_path = notes_path / file_path
+
+    if not full_path.exists():
+        return f"Note file not found: {file_path}"
+
+    if not full_path.is_file():
+        return f"Path is not a file: {file_path}"
+
+    try:
+        content = full_path.read_text(encoding="utf-8")
+        return f"📄 {file_path}\n\n{content}"
+    except Exception as e:
+        return f"Error reading note file: {str(e)}"
+
+
 def search_notes(query: str) -> str:
     """Search through notes in the notes directory.
 
@@ -99,5 +285,24 @@ notes_search_tool = Tool(
     args_schema=NotesSearchInput
 )
 
+customer_notes_search_tool = Tool(
+    name="search_customer_notes",
+    description="Search through customer meeting notes in the hierarchical Customer_Notes directory. Use this when preparing SE weekly updates to gather recent customer activity, or when the user asks about specific customer meetings. Searches by customer name, content, and returns notes sorted by date (newest first).",
+    func=search_customer_notes,
+    args_schema=CustomerNotesSearchInput
+)
+
+read_customer_note_tool = Tool(
+    name="read_customer_note",
+    description="Read the full content of a specific customer meeting note. Use this after finding relevant notes with search_customer_notes to get complete details about a meeting.",
+    func=read_customer_note,
+    args_schema=ReadCustomerNoteInput
+)
+
 # Export all tools
-ALL_TOOLS = [current_date_tool, notes_search_tool]
+ALL_TOOLS = [
+    current_date_tool,
+    notes_search_tool,
+    customer_notes_search_tool,
+    read_customer_note_tool
+]

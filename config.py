@@ -22,5 +22,11 @@ SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "system_prompt.md")
 # Notes directory for search tool
 NOTES_DIR = os.getenv("NOTES_DIR", "notes")
 
+# Customer notes directory for meeting notes search
+# Users can either:
+# 1. Create a symlink: ln -s /path/to/your/Customer_Notes ./Customer_Notes
+# 2. Set CUSTOMER_NOTES_DIR environment variable to the full path
+CUSTOMER_NOTES_DIR = os.getenv("CUSTOMER_NOTES_DIR", "Customer_Notes")
+
 # Model identifier that Vera advertises
 VERA_MODEL_NAME = "wwtfo/vera"

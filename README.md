@@ -4,7 +4,7 @@ A Flask-based chatbot application with tool calling capabilities, providing an O
 
 ## Features
 
-- 🔧 **Tool Calling**: Built-in tools for current date/time and notes search
+- 🔧 **Tool Calling**: Built-in tools for current date/time, notes search, and customer meeting notes
 - 🔌 **OpenAI-Compatible API**: Works with any OpenAI-compatible client
 - 🎯 **Multiple Backends**: Supports both Ollama and LM Studio
 - 📝 **Smart Caching**: Efficient system prompt caching based on file modification time
@@ -61,6 +61,7 @@ export VERA_PORT=8000
 export VERA_TEMPERATURE=0.0
 export SYSTEM_PROMPT_PATH=system_prompt.md
 export NOTES_DIR=notes
+export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
 ```
 
 ## Usage
@@ -119,6 +120,35 @@ Get the current date and time in any format.
 Search through your notes in the `notes/` directory.
 
 **Example**: "Search my notes for project ideas"
+
+### 3. Customer Notes Search Tool
+Search through customer meeting notes organized in a hierarchical directory structure.
+
+**Setup**: Create a symbolic link to your customer notes:
+```bash
+ln -s /path/to/your/Customer_Notes ./Customer_Notes
+```
+
+Or set the `CUSTOMER_NOTES_DIR` environment variable to point to your notes location.
+
+**Expected Structure**:
+```
+Customer_Notes/
+├── 0-9/
+├── A/
+│   └── Adobe/
+│       └── 10_Meetings/
+│           └── 2025-01-15_Discovery_Call.md
+├── B/
+└── ...
+```
+
+**Example**: "Show me recent Adobe meetings" or "Search customer notes for Vault discussions"
+
+### 4. Read Customer Note Tool
+Read the full content of a specific customer meeting note.
+
+**Example**: Used automatically after searching to get full meeting details
 
 ## Customization
 
@@ -221,6 +251,7 @@ Vera
 ├── tools.py          # Tool definitions
 ├── system_prompt.md  # System prompt (customizable)
 ├── notes/            # Notes directory for search
+├── Customer_Notes/   # Symlink to customer meeting notes (optional)
 └── requirements.txt  # Python dependencies
 ```
 
