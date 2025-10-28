@@ -1,11 +1,16 @@
 """Tool definitions for Vera."""
 import os
+import re
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 from langchain.tools import Tool
 from langchain.pydantic_v1 import BaseModel, Field
 import config
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class CurrentDateInput(BaseModel):
@@ -78,7 +83,13 @@ def search_customer_notes(
     """
     notes_path = Path(config.CUSTOMER_NOTES_DIR)
 
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Starting search")
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Directory: {notes_path.absolute()}")
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer: {customer_name or 'ALL'}")
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Content query: {content_query or 'NONE'}")
+
     if not notes_path.exists():
+        logger.warning(f"[CUSTOMER_NOTES_SEARCH] Directory does not exist: {notes_path.absolute()}")
         return (
             f"Customer notes directory '{config.CUSTOMER_NOTES_DIR}' does not exist.\n\n"
             f"To set up customer notes:\n"
@@ -93,34 +104,49 @@ def search_customer_notes(
 
     # Search through the hierarchical structure
     # Pattern: Customer_Notes/[Letter]/[Customer]/10_Meetings/*.md
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Scanning directory structure...")
     for letter_dir in notes_path.iterdir():
         if not letter_dir.is_dir():
+            logger.debug(f"[CUSTOMER_NOTES_SEARCH] Skipping non-directory: {letter_dir.name}")
             continue
+
+        logger.debug(f"[CUSTOMER_NOTES_SEARCH] Scanning letter directory: {letter_dir.name}")
 
         for customer_dir in letter_dir.iterdir():
             if not customer_dir.is_dir():
+                logger.debug(f"[CUSTOMER_NOTES_SEARCH] Skipping non-directory: {customer_dir.name}")
                 continue
+
+            logger.debug(f"[CUSTOMER_NOTES_SEARCH] Found customer directory: {customer_dir.name}")
 
             # Filter by customer name if provided
             if customer_name and customer_name.lower() not in customer_dir.name.lower():
+                logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' doesn't match filter '{customer_name}', skipping")
                 continue
 
             # Look for meetings directory (could be "10_Meetings" or similar)
             meetings_dirs = [d for d in customer_dir.iterdir() if d.is_dir() and "meeting" in d.name.lower()]
+            logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}': found {len(meetings_dirs)} meeting directories")
 
             for meetings_dir in meetings_dirs:
+                logger.debug(f"[CUSTOMER_NOTES_SEARCH] Scanning meeting directory: {meetings_dir.name}")
+
                 # Search through markdown files
-                for file_path in meetings_dir.glob("*.md"):
+                md_files = list(meetings_dir.glob("*.md"))
+                logger.info(f"[CUSTOMER_NOTES_SEARCH] Found {len(md_files)} markdown files in {meetings_dir.name}")
+
+                for file_path in md_files:
+                    logger.debug(f"[CUSTOMER_NOTES_SEARCH] Reading file: {file_path.name}")
                     try:
                         content = file_path.read_text(encoding="utf-8")
 
                         # If content query is provided, check if it matches
                         if content_query and content_query.lower() not in content.lower():
+                            logger.debug(f"[CUSTOMER_NOTES_SEARCH] File '{file_path.name}' doesn't match content query, skipping")
                             continue
 
                         # Extract date from filename if possible (format: YYYY-MM-DD_...)
                         date_str = ""
-                        import re
                         date_match = re.search(r'(\d{4}-\d{2}-\d{2})', file_path.name)
                         if date_match:
                             date_str = date_match.group(1)
@@ -139,10 +165,13 @@ def search_customer_notes(
                             "date": date_str,
                             "preview": preview[:200] + "..." if len(preview) > 200 else preview
                         })
+                        logger.info(f"[CUSTOMER_NOTES_SEARCH] Added result: {file_path.name} (date: {date_str})")
 
                     except Exception as e:
-                        # Skip files that can't be read
+                        logger.error(f"[CUSTOMER_NOTES_SEARCH] Error reading file {file_path}: {e}")
                         continue
+
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Search complete. Found {len(results)} total results before sorting/limiting")
 
     if not results:
         search_terms = []
@@ -159,9 +188,11 @@ def search_customer_notes(
     # Sort by date if requested
     if sort_by_date:
         results.sort(key=lambda x: x["date"], reverse=True)
+        logger.debug(f"[CUSTOMER_NOTES_SEARCH] Results sorted by date")
 
     # Limit results
     results = results[:limit]
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Returning {len(results)} results after limiting to {limit}")
 
     # Format output
     output = [f"Found {len(results)} customer meeting note(s):\n"]
