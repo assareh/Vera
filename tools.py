@@ -85,8 +85,30 @@ def search_customer_notes(
 
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Starting search")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Directory: {notes_path.absolute()}")
-    logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer: {customer_name or 'ALL'}")
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer (original): {customer_name or 'ALL'}")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Content query: {content_query or 'NONE'}")
+
+    # Normalize customer name: replace spaces with underscores and handle aliases
+    search_terms = []
+    if customer_name:
+        # Convert to lowercase for comparison
+        customer_lower = customer_name.lower().strip()
+
+        # Replace spaces with underscores (e.g., "Hewlett Packard" -> "hewlett_packard")
+        normalized_name = customer_lower.replace(" ", "_")
+        search_terms.append(normalized_name)
+
+        # Check if it's an alias and add the full name
+        if customer_lower in config.CUSTOMER_ALIASES:
+            full_name = config.CUSTOMER_ALIASES[customer_lower]
+            search_terms.append(full_name)
+            logger.info(f"[CUSTOMER_NOTES_SEARCH] Alias detected: '{customer_name}' -> '{full_name}'")
+
+        # Also add the original term with spaces replaced (for direct matches)
+        if normalized_name not in search_terms:
+            search_terms.append(normalized_name)
+
+        logger.info(f"[CUSTOMER_NOTES_SEARCH] Search terms: {search_terms}")
 
     if not notes_path.exists():
         logger.warning(f"[CUSTOMER_NOTES_SEARCH] Directory does not exist: {notes_path.absolute()}")
@@ -120,9 +142,16 @@ def search_customer_notes(
             logger.debug(f"[CUSTOMER_NOTES_SEARCH] Found customer directory: {customer_dir.name}")
 
             # Filter by customer name if provided
-            if customer_name and customer_name.lower() not in customer_dir.name.lower():
-                logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' doesn't match filter '{customer_name}', skipping")
-                continue
+            if search_terms:
+                # Check if any search term matches this customer directory
+                customer_dir_lower = customer_dir.name.lower()
+                matches = any(term in customer_dir_lower for term in search_terms)
+
+                if not matches:
+                    logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' doesn't match any search terms {search_terms}, skipping")
+                    continue
+                else:
+                    logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' matches search terms")
 
             # Look for meetings directory (could be "10_Meetings" or similar)
             meetings_dirs = [d for d in customer_dir.iterdir() if d.is_dir() and "meeting" in d.name.lower()]
