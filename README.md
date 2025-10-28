@@ -4,7 +4,7 @@ A Flask-based chatbot application with tool calling capabilities, providing an O
 
 ## Features
 
-- 🔧 **Tool Calling**: Built-in tools for current date/time, notes search, and customer meeting notes
+- 🔧 **Tool Calling**: Built-in tools for current date/time and customer meeting notes search
 - 🔌 **OpenAI-Compatible API**: Works with any OpenAI-compatible client
 - 🎯 **Multiple Backends**: Supports both Ollama and LM Studio
 - 📝 **Smart Caching**: Efficient system prompt caching based on file modification time
@@ -116,12 +116,7 @@ Get the current date and time in any format.
 
 **Example**: "What's today's date?" or "What's the current time?"
 
-### 2. Notes Search Tool
-Search through your notes in the `notes/` directory.
-
-**Example**: "Search my notes for project ideas"
-
-### 3. Customer Notes Search Tool
+### 2. Customer Notes Search Tool
 Search through customer meeting notes organized in a hierarchical directory structure.
 
 **Setup**: Create a symbolic link to your customer notes:
@@ -145,7 +140,7 @@ Customer_Notes/
 
 **Example**: "Show me recent Adobe meetings" or "Search customer notes for Vault discussions"
 
-### 4. Read Customer Note Tool
+### 3. Read Customer Note Tool
 Read the full content of a specific customer meeting note.
 
 **Example**: Used automatically after searching to get full meeting details
@@ -155,10 +150,6 @@ Read the full content of a specific customer meeting note.
 ### System Prompt
 
 Edit `system_prompt.md` to customize Vera's behavior. The file is automatically cached and reloaded when modified.
-
-### Adding Notes
-
-Place any `.txt`, `.md`, or `.markdown` files in the `notes/` directory. Vera will search through them when asked.
 
 ### Adding Tools
 
@@ -250,7 +241,6 @@ Vera
 ├── config.py         # Configuration management
 ├── tools.py          # Tool definitions
 ├── system_prompt.md  # System prompt (customizable)
-├── notes/            # Notes directory for search
 ├── Customer_Notes/   # Symlink to customer meeting notes (optional)
 └── requirements.txt  # Python dependencies
 ```
@@ -263,9 +253,9 @@ Vera
 - Verify the model name is correct
 
 **Tools not working:**
-- Check the notes directory exists
 - Ensure your system prompt allows tool usage
 - Verify the backend model supports function calling
+- For customer notes: check that the Customer_Notes symlink or directory exists
 
 **Open Web UI not starting:**
 - Install it manually: `pip install open-webui`

@@ -23,9 +23,8 @@ You help Solutions Engineers (SEs) with their daily tasks and responsibilities, 
 # Available Tools
 
 1. **get_current_date**: Check the current date and time for time-sensitive updates and deadlines
-2. **search_notes**: Search through notes containing templates, definitions, best practices, and reference materials for WARMER assessments and other SE workflows
-3. **search_customer_notes**: Search customer meeting notes by customer name or content, sorted by date (newest first). Use this to gather recent customer activity when preparing SE weekly updates.
-4. **read_customer_note**: Read the full content of a specific customer meeting note to get complete details
+2. **search_customer_notes**: Search customer meeting notes by customer name or content, sorted by date (newest first). Use this to gather recent customer activity when preparing SE weekly updates.
+3. **read_customer_note**: Read the full content of a specific customer meeting note to get complete details
 
 # User Query Workflows
 

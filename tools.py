@@ -28,11 +28,6 @@ def get_current_date(format: str = "%Y-%m-%d") -> str:
     return datetime.now().strftime(format)
 
 
-class NotesSearchInput(BaseModel):
-    """Input schema for notes search tool."""
-    query: str = Field(description="The search query to find in notes")
-
-
 class CustomerNotesSearchInput(BaseModel):
     """Input schema for customer notes search tool."""
     customer_name: str = Field(
@@ -219,70 +214,12 @@ def read_customer_note(file_path: str) -> str:
         return f"Error reading note file: {str(e)}"
 
 
-def search_notes(query: str) -> str:
-    """Search through notes in the notes directory.
-
-    Args:
-        query: The search query to find in notes
-
-    Returns:
-        A formatted string containing matching notes and their content
-    """
-    notes_path = Path(config.NOTES_DIR)
-
-    if not notes_path.exists():
-        return f"Notes directory '{config.NOTES_DIR}' does not exist."
-
-    results: List[Dict[str, Any]] = []
-    query_lower = query.lower()
-
-    # Search through all text and markdown files
-    for file_path in notes_path.rglob("*"):
-        if file_path.is_file() and file_path.suffix in [".txt", ".md", ".markdown"]:
-            try:
-                content = file_path.read_text(encoding="utf-8")
-
-                # Find matching lines
-                matching_lines = []
-                for line_num, line in enumerate(content.splitlines(), 1):
-                    if query_lower in line.lower():
-                        matching_lines.append(f"  Line {line_num}: {line.strip()}")
-
-                if matching_lines:
-                    relative_path = file_path.relative_to(notes_path)
-                    results.append({
-                        "file": str(relative_path),
-                        "matches": matching_lines
-                    })
-            except Exception as e:
-                # Skip files that can't be read
-                continue
-
-    if not results:
-        return f"No matches found for '{query}' in notes directory."
-
-    # Format results
-    output = [f"Found {len(results)} file(s) with matches for '{query}':\n"]
-    for result in results:
-        output.append(f"\n📄 {result['file']}")
-        output.append("\n".join(result["matches"]))
-
-    return "\n".join(output)
-
-
 # Define the tools
 current_date_tool = Tool(
     name="get_current_date",
     description="Get the current date and time. Useful when you need to know what day it is or the current date. You can optionally specify a format string.",
     func=get_current_date,
     args_schema=CurrentDateInput
-)
-
-notes_search_tool = Tool(
-    name="search_notes",
-    description="Search through notes stored in the notes directory. Use this when the user asks about their notes, wants to find information they've saved, or references something they may have written down.",
-    func=search_notes,
-    args_schema=NotesSearchInput
 )
 
 customer_notes_search_tool = Tool(
@@ -302,7 +239,6 @@ read_customer_note_tool = Tool(
 # Export all tools
 ALL_TOOLS = [
     current_date_tool,
-    notes_search_tool,
     customer_notes_search_tool,
     read_customer_note_tool
 ]
