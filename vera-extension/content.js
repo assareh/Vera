@@ -13,10 +13,14 @@ function init() {
         // Try to get user initials from the avatar bubble
         const userInitials = getUserInitials();
 
+        // Try to get opportunity title from modal
+        const opportunityTitle = getOpportunityTitle();
+
         sendResponse({
           exists: true,
           currentValue: seField.value || '',
-          userInitials: userInitials
+          userInitials: userInitials,
+          opportunityTitle: opportunityTitle
         });
       } else {
         sendResponse({ exists: false });
@@ -46,6 +50,21 @@ function getUserInitials() {
     return null;
   } catch (error) {
     console.error('Error getting user initials:', error);
+    return null;
+  }
+}
+
+// Get opportunity title from modal
+function getOpportunityTitle() {
+  try {
+    // Look for modal title element with class _modal_title__lviZX
+    const modalTitle = document.querySelector('._modal_title__lviZX');
+    if (modalTitle && modalTitle.textContent) {
+      return modalTitle.textContent.trim();
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting opportunity title:', error);
     return null;
   }
 }

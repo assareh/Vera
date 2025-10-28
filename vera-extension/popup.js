@@ -3,6 +3,7 @@
 let veraEndpoint = 'http://localhost:8000';
 let conversationHistory = [];
 let userInitials = null;
+let opportunityTitle = null;
 let latestCompleteUpdate = null;
 let seWeeklyUpdateAvailable = false;
 let seCurrentValue = '';
@@ -218,6 +219,7 @@ async function checkSEWeeklyUpdate() {
           seWeeklyUpdateAvailable = true;
           seCurrentValue = response.currentValue || '';
           userInitials = response.userInitials;
+          opportunityTitle = response.opportunityTitle;
 
           // Show the quick actions section and SE button
           document.getElementById('quickActionsSection').classList.remove('hidden');
@@ -235,6 +237,10 @@ async function completeSEWeeklyUpdate() {
   try {
     // Build the initial prompt
     let prompt = 'Please complete my SE weekly update.';
+
+    if (opportunityTitle) {
+      prompt += `\n\nOpportunity title: ${opportunityTitle}`;
+    }
 
     if (userInitials) {
       prompt += `\n\nMy initials are: ${userInitials}`;
