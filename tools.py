@@ -10,6 +10,7 @@ from langchain.tools import Tool
 from pydantic import BaseModel, Field
 from duckduckgo_search import DDGS
 import config
+from hashicorp_pdf_search import search_pdfs
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -294,10 +295,14 @@ class HashiCorpDocsSearchInput(BaseModel):
 def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -> str:
     """Search HashiCorp product documentation.
 
-    This tool searches hashicorp.com domain for documentation and returns
-    relevant results with titles, URLs, and descriptions. Use this when
-    users ask questions about HashiCorp products like Terraform, Vault,
-    Consul, Nomad, Packer, or Waypoint.
+    This tool searches both HashiCorp's validated design PDFs and online documentation,
+    providing comprehensive results. Use this when users ask questions about HashiCorp
+    products like Terraform, Vault, Consul, Nomad, Packer, or Waypoint.
+
+    ⚠️  CRITICAL: When citing HashiCorp resources:
+    - Use ONLY the URLs provided in the search results
+    - Do NOT generate, infer, or hallucinate URLs
+    - If a URL is not provided in the results, do not make one up
 
     Args:
         query: The search query
@@ -305,7 +310,7 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
         max_results: Maximum number of results (default 5, max 10)
 
     Returns:
-        Formatted search results with titles, URLs, and descriptions
+        Formatted search results combining PDF and web sources with actual URLs
     """
     logger.info(f"[HASHICORP_SEARCH] Starting search")
     logger.info(f"[HASHICORP_SEARCH] Query: {query}")
@@ -313,6 +318,22 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
 
     # Limit results
     max_results = min(max(1, max_results), 10)
+
+    output_sections = []
+
+    # === PART 1: Search Validated Design PDFs ===
+    logger.info("[HASHICORP_SEARCH] Searching validated design PDFs...")
+    try:
+        pdf_results = search_pdfs(query, top_k=3, product=product)
+        if pdf_results and "not initialized" not in pdf_results.lower():
+            output_sections.append("=== Validated Design Documents ===\n")
+            output_sections.append(pdf_results)
+            output_sections.append("\n")
+    except Exception as e:
+        logger.warning(f"[HASHICORP_SEARCH] PDF search failed: {e}")
+
+    # === PART 2: Search Online Documentation ===
+    logger.info("[HASHICORP_SEARCH] Searching online documentation...")
 
     # Build search query with site restriction
     search_query = f"site:hashicorp.com {query}"
@@ -323,59 +344,67 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
         search_query = f"site:hashicorp.com/{product_lower} {query}"
         logger.info(f"[HASHICORP_SEARCH] Product-specific search: {search_query}")
 
-    # Perform search with retry logic for rate limits
-    max_retries = 3
-    retry_delay = 2  # seconds
+    # Perform search with minimal retry logic for rate limits
+    # Note: PDF search is primary, web search is supplementary
+    max_retries = 1  # Reduced from 3 to avoid hammering DuckDuckGo
+    retry_delay = 8  # Increased from 2 to respect rate limits
 
     for attempt in range(max_retries):
         try:
-            logger.info(f"[HASHICORP_SEARCH] Executing search (attempt {attempt + 1}/{max_retries}): {search_query}")
+            logger.info(f"[HASHICORP_SEARCH] Executing web search (attempt {attempt + 1}/{max_retries}): {search_query}")
 
-            with DDGS() as ddgs:
-                results = list(ddgs.text(search_query, max_results=max_results))
+            # Suppress async warnings from duckduckgo_search library
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*AsyncSession.*")
+                with DDGS() as ddgs:
+                    results = list(ddgs.text(search_query, max_results=max_results))
 
-            logger.info(f"[HASHICORP_SEARCH] Found {len(results)} results")
+            logger.info(f"[HASHICORP_SEARCH] Found {len(results)} web results")
 
-            if not results:
-                return f"No HashiCorp documentation found for query: '{query}'"
+            if results:
+                output_sections.append("=== Online Documentation ===\n")
+                output_sections.append(f"Found {len(results)} online documentation result(s):\n")
 
-            # Format output
-            output = [f"Found {len(results)} HashiCorp documentation result(s) for '{query}':\n"]
+                for idx, result in enumerate(results, 1):
+                    title = result.get("title", "No title")
+                    url = result.get("href", "")
+                    description = result.get("body", "No description")
 
-            for idx, result in enumerate(results, 1):
-                title = result.get("title", "No title")
-                url = result.get("href", "")
-                description = result.get("body", "No description")
+                    output_sections.append(f"\n{idx}. {title}")
+                    output_sections.append(f"   URL: {url}")
+                    output_sections.append(f"   {description}")
+                    output_sections.append("")
 
-                output.append(f"\n{idx}. {title}")
-                output.append(f"   URL: {url}")
-                output.append(f"   {description}")
-                output.append("")
-
-            return "\n".join(output)
+            break  # Success, exit retry loop
 
         except Exception as e:
             error_str = str(e)
-            logger.warning(f"[HASHICORP_SEARCH] Attempt {attempt + 1} failed: {error_str}")
 
             # Check if it's a rate limit error
-            if "ratelimit" in error_str.lower() and attempt < max_retries - 1:
-                logger.info(f"[HASHICORP_SEARCH] Rate limit detected, waiting {retry_delay} seconds before retry...")
+            if "ratelimit" in error_str.lower():
+                logger.info(f"[HASHICORP_SEARCH] Rate limited by DuckDuckGo - skipping web search")
+            else:
+                logger.warning(f"[HASHICORP_SEARCH] Web search failed: {error_str}")
+
+            if attempt < max_retries - 1:
+                logger.info(f"[HASHICORP_SEARCH] Waiting {retry_delay} seconds before retry...")
                 time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
                 continue
 
-            # If it's the last attempt or not a rate limit error, return error message
-            error_msg = f"Unable to search HashiCorp docs at this time. "
-            if "ratelimit" in error_str.lower():
-                error_msg += "The search service is temporarily rate-limited. Please try again in a moment."
-            else:
-                error_msg += f"Error: {error_str}"
+            # If it's the last attempt, add error note
+            if attempt == max_retries - 1:
+                output_sections.append("=== Online Documentation ===\n")
+                if "ratelimit" in error_str.lower():
+                    output_sections.append("Note: Web search temporarily rate-limited. Showing PDF results only.\n")
+                else:
+                    output_sections.append(f"Note: Web search unavailable ({error_str}). Showing PDF results only.\n")
 
-            logger.error(f"[HASHICORP_SEARCH] {error_msg}")
-            return error_msg
-
-    return "Unable to complete search after multiple attempts. Please try again later."
+    # Return combined results
+    if output_sections:
+        return "\n".join(output_sections)
+    else:
+        return f"No HashiCorp documentation found for query: '{query}'"
 
 
 # Define the tools
@@ -402,7 +431,7 @@ read_customer_note_tool = Tool(
 
 hashicorp_docs_search_tool = Tool(
     name="search_hashicorp_docs",
-    description="Search HashiCorp product documentation (Terraform, Vault, Consul, Nomad, Packer, Waypoint, etc.). Use this when users ask questions about HashiCorp products, features, configurations, or best practices. Returns relevant documentation pages with titles, URLs, and descriptions.",
+    description="Search HashiCorp product documentation including validated design PDFs and online docs (Terraform, Vault, Consul, Nomad, Packer, Waypoint, etc.). Provides comprehensive results from both official validated design documents and web documentation. Use this when users ask questions about HashiCorp products, features, configurations, best practices, or architecture patterns.",
     func=search_hashicorp_docs,
     args_schema=HashiCorpDocsSearchInput
 )

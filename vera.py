@@ -6,6 +6,7 @@ import subprocess
 import signal
 import sys
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Generator
@@ -16,6 +17,7 @@ import click
 
 import config
 from tools import ALL_TOOLS
+from hashicorp_pdf_search import initialize_pdf_search
 
 
 app = Flask(__name__)
@@ -75,7 +77,7 @@ def call_ollama_with_tools(messages: list, tools: list, temperature: float = 0.0
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.args_schema.schema() if hasattr(tool.args_schema, "schema") else {}
+                "parameters": tool.args_schema.model_json_schema() if hasattr(tool.args_schema, "model_json_schema") else {}
             }
         }
         ollama_tools.append(tool_def)
@@ -108,7 +110,7 @@ def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.args_schema.schema() if hasattr(tool.args_schema, "schema") else {}
+                "parameters": tool.args_schema.model_json_schema() if hasattr(tool.args_schema, "model_json_schema") else {}
             }
         }
         openai_tools.append(tool_def)
@@ -570,6 +572,21 @@ API: http://localhost:{port}/v1
 
     # Create notes directory if it doesn't exist
     Path(config.NOTES_DIR).mkdir(exist_ok=True)
+
+    # Initialize HashiCorp PDF search index in background
+    print("Initializing HashiCorp validated designs search index...")
+    print("(This runs in the background and won't block startup)")
+
+    def init_pdf_search_background():
+        """Initialize PDF search in background thread."""
+        try:
+            initialize_pdf_search()
+            print("✓ HashiCorp PDF search index ready")
+        except Exception as e:
+            print(f"✗ Warning: Failed to initialize PDF search: {e}")
+
+    pdf_thread = threading.Thread(target=init_pdf_search_background, daemon=True)
+    pdf_thread.start()
 
     # Start Web UI if requested
     if not no_webui:

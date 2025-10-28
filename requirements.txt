@@ -7,6 +7,16 @@ python-dotenv==1.0.0
 click==8.1.7
 duckduckgo-search==4.4.3
 
+# Semantic search for PDF documents
+sentence-transformers==2.2.2
+faiss-cpu==1.8.0
+pypdf==3.17.4
+
+# Automated PDF downloads
+selenium==4.16.0
+webdriver-manager==4.0.1
+beautifulsoup4==4.12.3
+
 # Optional: Install open-webui separately if you want the Web UI
 # Note: open-webui requires Python 3.11-3.12
 # pip install open-webui
