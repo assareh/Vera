@@ -6,13 +6,18 @@ let userInitials = null;
 let latestCompleteUpdate = null;
 let seWeeklyUpdateAvailable = false;
 let seCurrentValue = '';
+let currentPageUrl = '';
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
+  // Get current tab URL
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  currentPageUrl = tab.url;
+
   // Load settings
   await loadSettings();
 
-  // Restore conversation state
+  // Restore conversation state (will check URL match)
   await restoreState();
 
   // Set up event listeners
@@ -66,7 +71,8 @@ async function saveState() {
     chrome.storage.local.set({
       conversationHistory: conversationHistory,
       latestCompleteUpdate: latestCompleteUpdate,
-      userInitials: userInitials
+      userInitials: userInitials,
+      pageUrl: currentPageUrl
     }, resolve);
   });
 }
@@ -74,7 +80,16 @@ async function saveState() {
 // Restore conversation state from storage
 async function restoreState() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(['conversationHistory', 'latestCompleteUpdate', 'userInitials'], (result) => {
+    chrome.storage.local.get(['conversationHistory', 'latestCompleteUpdate', 'userInitials', 'pageUrl'], (result) => {
+      // Check if we're on a different page
+      if (result.pageUrl && result.pageUrl !== currentPageUrl) {
+        console.log('Page changed, clearing conversation state');
+        clearState();
+        resolve();
+        return;
+      }
+
+      // Same page, restore state
       if (result.conversationHistory) {
         conversationHistory = result.conversationHistory;
         // Rebuild chat UI
@@ -101,8 +116,32 @@ async function restoreState() {
   });
 }
 
+// Clear conversation state
+function clearState() {
+  conversationHistory = [];
+  latestCompleteUpdate = null;
+  userInitials = null;
+
+  // Clear UI
+  const chatMessages = document.getElementById('chatMessages');
+  chatMessages.innerHTML = '';
+  document.getElementById('commitBtn').classList.add('hidden');
+
+  // Clear storage
+  chrome.storage.local.remove(['conversationHistory', 'latestCompleteUpdate', 'userInitials', 'pageUrl']);
+}
+
 // Set up event listeners
 function setupEventListeners() {
+  // Clear button
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    if (confirm('Clear conversation and start fresh?')) {
+      clearState();
+      showStatus('Conversation cleared', 'success');
+      setTimeout(hideStatus, 2000);
+    }
+  });
+
   // Settings
   document.getElementById('settingsBtn').addEventListener('click', toggleSettings);
   document.getElementById('saveSettings').addEventListener('click', async () => {
