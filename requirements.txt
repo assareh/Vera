@@ -5,6 +5,7 @@ langchain-community==0.0.13
 requests==2.31.0
 python-dotenv==1.0.0
 click==8.1.7
+duckduckgo-search==4.4.3
 
 # Optional: Install open-webui separately if you want the Web UI
 # Note: open-webui requires Python 3.11-3.12

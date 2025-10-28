@@ -2,11 +2,13 @@
 import os
 import re
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 from langchain.tools import Tool
 from pydantic import BaseModel, Field
+from duckduckgo_search import DDGS
 import config
 
 # Configure logging
@@ -274,6 +276,108 @@ def read_customer_note(file_path: str) -> str:
         return f"Error reading note file: {str(e)}"
 
 
+class HashiCorpDocsSearchInput(BaseModel):
+    """Input schema for HashiCorp docs search tool."""
+    query: str = Field(
+        description="The search query for HashiCorp documentation (e.g., 'Terraform module syntax', 'Vault authentication methods', 'Consul service mesh')"
+    )
+    product: str = Field(
+        default="",
+        description="Optional: Specific HashiCorp product to search (e.g., 'terraform', 'vault', 'consul', 'nomad', 'packer', 'waypoint'). Leave empty to search all products."
+    )
+    max_results: int = Field(
+        default=5,
+        description="Maximum number of results to return. Default is 5, max is 10."
+    )
+
+
+def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -> str:
+    """Search HashiCorp product documentation.
+
+    This tool searches hashicorp.com domain for documentation and returns
+    relevant results with titles, URLs, and descriptions. Use this when
+    users ask questions about HashiCorp products like Terraform, Vault,
+    Consul, Nomad, Packer, or Waypoint.
+
+    Args:
+        query: The search query
+        product: Optional specific product to search (terraform, vault, consul, etc.)
+        max_results: Maximum number of results (default 5, max 10)
+
+    Returns:
+        Formatted search results with titles, URLs, and descriptions
+    """
+    logger.info(f"[HASHICORP_SEARCH] Starting search")
+    logger.info(f"[HASHICORP_SEARCH] Query: {query}")
+    logger.info(f"[HASHICORP_SEARCH] Product: {product or 'ALL'}")
+
+    # Limit results
+    max_results = min(max(1, max_results), 10)
+
+    # Build search query with site restriction
+    search_query = f"site:hashicorp.com {query}"
+
+    # If specific product is requested, add it to the query
+    if product:
+        product_lower = product.lower().strip()
+        search_query = f"site:hashicorp.com/{product_lower} {query}"
+        logger.info(f"[HASHICORP_SEARCH] Product-specific search: {search_query}")
+
+    # Perform search with retry logic for rate limits
+    max_retries = 3
+    retry_delay = 2  # seconds
+
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"[HASHICORP_SEARCH] Executing search (attempt {attempt + 1}/{max_retries}): {search_query}")
+
+            with DDGS() as ddgs:
+                results = list(ddgs.text(search_query, max_results=max_results))
+
+            logger.info(f"[HASHICORP_SEARCH] Found {len(results)} results")
+
+            if not results:
+                return f"No HashiCorp documentation found for query: '{query}'"
+
+            # Format output
+            output = [f"Found {len(results)} HashiCorp documentation result(s) for '{query}':\n"]
+
+            for idx, result in enumerate(results, 1):
+                title = result.get("title", "No title")
+                url = result.get("href", "")
+                description = result.get("body", "No description")
+
+                output.append(f"\n{idx}. {title}")
+                output.append(f"   URL: {url}")
+                output.append(f"   {description}")
+                output.append("")
+
+            return "\n".join(output)
+
+        except Exception as e:
+            error_str = str(e)
+            logger.warning(f"[HASHICORP_SEARCH] Attempt {attempt + 1} failed: {error_str}")
+
+            # Check if it's a rate limit error
+            if "ratelimit" in error_str.lower() and attempt < max_retries - 1:
+                logger.info(f"[HASHICORP_SEARCH] Rate limit detected, waiting {retry_delay} seconds before retry...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+
+            # If it's the last attempt or not a rate limit error, return error message
+            error_msg = f"Unable to search HashiCorp docs at this time. "
+            if "ratelimit" in error_str.lower():
+                error_msg += "The search service is temporarily rate-limited. Please try again in a moment."
+            else:
+                error_msg += f"Error: {error_str}"
+
+            logger.error(f"[HASHICORP_SEARCH] {error_msg}")
+            return error_msg
+
+    return "Unable to complete search after multiple attempts. Please try again later."
+
+
 # Define the tools
 current_date_tool = Tool(
     name="get_current_date",
@@ -296,9 +400,17 @@ read_customer_note_tool = Tool(
     args_schema=ReadCustomerNoteInput
 )
 
+hashicorp_docs_search_tool = Tool(
+    name="search_hashicorp_docs",
+    description="Search HashiCorp product documentation (Terraform, Vault, Consul, Nomad, Packer, Waypoint, etc.). Use this when users ask questions about HashiCorp products, features, configurations, or best practices. Returns relevant documentation pages with titles, URLs, and descriptions.",
+    func=search_hashicorp_docs,
+    args_schema=HashiCorpDocsSearchInput
+)
+
 # Export all tools
 ALL_TOOLS = [
     current_date_tool,
     customer_notes_search_tool,
-    read_customer_note_tool
+    read_customer_note_tool,
+    hashicorp_docs_search_tool
 ]
