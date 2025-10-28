@@ -120,15 +120,15 @@ async function restoreState() {
 function clearState() {
   conversationHistory = [];
   latestCompleteUpdate = null;
-  userInitials = null;
+  // Keep userInitials - they persist across conversations
 
   // Clear UI
   const chatMessages = document.getElementById('chatMessages');
   chatMessages.innerHTML = '';
   document.getElementById('commitBtn').classList.add('hidden');
 
-  // Clear storage
-  chrome.storage.local.remove(['conversationHistory', 'latestCompleteUpdate', 'userInitials', 'pageUrl']);
+  // Clear storage (keep userInitials)
+  chrome.storage.local.remove(['conversationHistory', 'latestCompleteUpdate', 'pageUrl']);
 }
 
 // Set up event listeners
