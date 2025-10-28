@@ -31,11 +31,6 @@ CUSTOMER_NOTES_DIR = os.getenv("CUSTOMER_NOTES_DIR", "Customer_Notes")
 # Customer name aliases for abbreviations and alternate names
 # Maps search terms (lowercase) to the actual directory names or patterns
 CUSTOMER_ALIASES = {
-    "hpe": "hewlett_packard_enterprise",
-    "hp": "hewlett_packard",
-    "aws": "amazon_web_services",
-    "gcp": "google_cloud_platform",
-    "ms": "microsoft",
     # Add more aliases as needed
 }
 

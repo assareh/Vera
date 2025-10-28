@@ -139,11 +139,11 @@ Customer_Notes/
 ```
 
 **Smart Name Matching**:
-- Automatically converts spaces to underscores (e.g., "Hewlett Packard Enterprise" finds `Hewlett_Packard_Enterprise`)
-- Supports abbreviations via `CUSTOMER_ALIASES` in `config.py` (e.g., "HPE" maps to "hewlett_packard_enterprise")
+- Automatically converts spaces to underscores
+- Supports abbreviations via `CUSTOMER_ALIASES` in `config.py`
 - Case-insensitive substring matching
 
-**Example**: "Show me recent Adobe meetings" or "Search HPE notes for Vault discussions"
+**Example**: "Show me recent Adobe meetings"
 
 ### 3. Read Customer Note Tool
 Read the full content of a specific customer meeting note.
