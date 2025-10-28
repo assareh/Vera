@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load settings
   await loadSettings();
 
+  // Restore conversation state
+  await restoreState();
+
   // Set up event listeners
   setupEventListeners();
 
@@ -20,6 +23,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Focus on chat input
   document.getElementById('chatInput').focus();
+
+  // Listen for messages from background script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'veraResponse') {
+      // Response arrived from background
+      handleVeraResponse(message.content);
+      hideStatus();
+    } else if (message.action === 'veraError') {
+      showStatus(message.error, 'error');
+    }
+  });
 });
 
 // Load settings from storage
@@ -41,6 +55,47 @@ async function saveSettings() {
   return new Promise((resolve) => {
     chrome.storage.sync.set({ veraEndpoint: endpoint }, () => {
       veraEndpoint = endpoint;
+      resolve();
+    });
+  });
+}
+
+// Save conversation state to storage
+async function saveState() {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({
+      conversationHistory: conversationHistory,
+      latestCompleteUpdate: latestCompleteUpdate,
+      userInitials: userInitials
+    }, resolve);
+  });
+}
+
+// Restore conversation state from storage
+async function restoreState() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['conversationHistory', 'latestCompleteUpdate', 'userInitials'], (result) => {
+      if (result.conversationHistory) {
+        conversationHistory = result.conversationHistory;
+        // Rebuild chat UI
+        const chatMessages = document.getElementById('chatMessages');
+        chatMessages.innerHTML = ''; // Clear existing
+        conversationHistory.forEach(msg => {
+          if (msg.role === 'user' || msg.role === 'assistant') {
+            addChatMessage(msg.role, msg.content, false); // Don't save again
+          }
+        });
+      }
+      if (result.latestCompleteUpdate) {
+        latestCompleteUpdate = result.latestCompleteUpdate;
+        // Show commit button if we have a complete update
+        if (latestCompleteUpdate) {
+          document.getElementById('commitBtn').classList.remove('hidden');
+        }
+      }
+      if (result.userInitials) {
+        userInitials = result.userInitials;
+      }
       resolve();
     });
   });
@@ -169,41 +224,27 @@ async function completeSEWeeklyUpdate() {
   }
 }
 
-// Call Vera API with current conversation history
+// Call Vera API via background script (persists even if popup closes)
 async function callVera() {
   try {
     showStatus('Sending to Vera...', 'loading');
 
-    const veraResponse = await fetch(`${veraEndpoint}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messages: conversationHistory,
-        temperature: 0.7,
-        stream: false
-      })
+    // Save state before making the call
+    await saveState();
+
+    // Send message to background script to handle the API call
+    chrome.runtime.sendMessage({
+      action: 'callVera',
+      endpoint: veraEndpoint,
+      messages: conversationHistory
     });
 
-    if (!veraResponse.ok) {
-      throw new Error(`HTTP error! status: ${veraResponse.status}`);
-    }
-
-    const data = await veraResponse.json();
-    const assistantMessage = data.choices[0].message.content;
-
-    // Add assistant response to history
-    conversationHistory.push({
-      role: 'assistant',
-      content: assistantMessage
-    });
-
-    hideStatus();
-    return assistantMessage;
+    // Note: Response will come back via chrome.runtime.onMessage listener
+    // even if popup closes and reopens
+    return null;
 
   } catch (error) {
-    showStatus(`Error: ${error.message}. Make sure Vera is running on ${veraEndpoint}`, 'error');
+    showStatus(`Error: ${error.message}`, 'error');
     console.error('Error calling Vera:', error);
     return null;
   }
@@ -211,6 +252,12 @@ async function callVera() {
 
 // Handle Vera's response (smart logic)
 function handleVeraResponse(response) {
+  // Add assistant response to conversation history
+  conversationHistory.push({
+    role: 'assistant',
+    content: response
+  });
+
   // Add to chat
   addChatMessage('assistant', response);
 
@@ -219,11 +266,13 @@ function handleVeraResponse(response) {
     latestCompleteUpdate = response;
     // Show commit button for SE updates
     document.getElementById('commitBtn').classList.remove('hidden');
+    // Save updated state
+    saveState();
   }
 }
 
 // Add a message to the chat
-function addChatMessage(role, content) {
+function addChatMessage(role, content, save = true) {
   const chatMessages = document.getElementById('chatMessages');
   const messageDiv = document.createElement('div');
   messageDiv.className = `chat-message ${role}`;
@@ -254,6 +303,11 @@ function addChatMessage(role, content) {
 
   // Scroll to bottom
   chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  // Save state if requested
+  if (save) {
+    saveState();
+  }
 }
 
 // Copy text to clipboard
