@@ -9,7 +9,36 @@ A Flask-based chatbot application with tool calling capabilities, providing an O
 - 🎯 **Multiple Backends**: Supports both Ollama and LM Studio
 - 📝 **Smart Caching**: Efficient system prompt caching based on file modification time
 - 🌐 **Optional Web UI**: Integrated Open Web UI for easy interaction
+- 🧩 **Chrome Extension**: Browser extension for SE Weekly Updates automation
 - ⚙️ **Configurable**: Flexible CLI and environment variable configuration
+
+## Chrome Extension
+
+Vera includes a Chrome extension for automating SE Weekly Updates with AI assistance.
+
+![Vera Extension Screenshot](docs/images/extension-screenshot.png)
+
+### Features
+
+- **Quick Actions**: One-click SE Weekly Update completion
+- **Smart Context**: Automatically extracts opportunity title and user initials from the page
+- **Chat Interface**: Conversational refinement of updates before committing
+- **Auto-Fill**: Inserts completed updates directly into Salesforce fields
+
+### Installation
+
+1. Navigate to `chrome://extensions` in Chrome
+2. Enable "Developer mode"
+3. Click "Load unpacked" and select the `vera-extension` directory
+4. Configure the extension to point to your Vera instance (default: `http://localhost:8000`)
+
+### Usage
+
+1. Open a Salesforce opportunity with an SE Weekly Update field
+2. Click the Vera extension icon
+3. Click "Complete SE Weekly Update" to generate an update
+4. Review and refine the generated content through chat
+5. Click "Commit" to insert the update into the field
 
 ## Quick Start
 
