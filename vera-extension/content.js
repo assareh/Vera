@@ -34,6 +34,44 @@ function init() {
       } else {
         sendResponse({ success: false, error: 'SE Weekly Update field not found' });
       }
+    } else if (request.action === 'checkWARMER') {
+      // Check if WARMER fields exist
+      const currentStateField = document.getElementById('Current_State_Workflow_and_Architecture__c');
+      const futureStateField = document.getElementById('Future_State_Vision__c');
+      const proposedArchField = document.getElementById('Proposed_Architecture__c');
+
+      if (currentStateField && futureStateField && proposedArchField) {
+        // Try to get user initials from the avatar bubble
+        const userInitials = getUserInitials();
+
+        // Try to get opportunity title from modal
+        const opportunityTitle = getOpportunityTitle();
+
+        sendResponse({
+          exists: true,
+          currentStateValue: currentStateField.value || '',
+          futureStateValue: futureStateField.value || '',
+          proposedArchValue: proposedArchField.value || '',
+          userInitials: userInitials,
+          opportunityTitle: opportunityTitle
+        });
+      } else {
+        sendResponse({ exists: false });
+      }
+    } else if (request.action === 'fillWARMER') {
+      // Fill the WARMER fields
+      const currentStateField = document.getElementById('Current_State_Workflow_and_Architecture__c');
+      const futureStateField = document.getElementById('Future_State_Vision__c');
+      const proposedArchField = document.getElementById('Proposed_Architecture__c');
+
+      if (currentStateField && futureStateField && proposedArchField) {
+        insertTextIntoField(currentStateField, request.currentState);
+        insertTextIntoField(futureStateField, request.futureState);
+        insertTextIntoField(proposedArchField, request.proposedArch);
+        sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'WARMER fields not found' });
+      }
     }
     return true; // Keep channel open for async response
   });

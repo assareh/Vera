@@ -5,8 +5,13 @@ let conversationHistory = [];
 let userInitials = null;
 let opportunityTitle = null;
 let latestCompleteUpdate = null;
+let latestCompleteWARMER = null;
 let seWeeklyUpdateAvailable = false;
 let seCurrentValue = '';
+let warmerAvailable = false;
+let warmerCurrentStateValue = '';
+let warmerFutureStateValue = '';
+let warmerProposedArchValue = '';
 let currentPageUrl = '';
 
 // Initialize
@@ -26,6 +31,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Check if SE Weekly Update field exists on the page
   await checkSEWeeklyUpdate();
+
+  // Check if WARMER fields exist on the page
+  await checkWARMER();
 
   // Focus on chat input
   document.getElementById('chatInput').focus();
@@ -72,6 +80,7 @@ async function saveState() {
     chrome.storage.local.set({
       conversationHistory: conversationHistory,
       latestCompleteUpdate: latestCompleteUpdate,
+      latestCompleteWARMER: latestCompleteWARMER,
       userInitials: userInitials,
       pageUrl: currentPageUrl
     }, resolve);
@@ -81,7 +90,7 @@ async function saveState() {
 // Restore conversation state from storage
 async function restoreState() {
   return new Promise((resolve) => {
-    chrome.storage.local.get(['conversationHistory', 'latestCompleteUpdate', 'userInitials', 'pageUrl'], (result) => {
+    chrome.storage.local.get(['conversationHistory', 'latestCompleteUpdate', 'latestCompleteWARMER', 'userInitials', 'pageUrl'], (result) => {
       // Check if we're on a different page
       if (result.pageUrl && result.pageUrl !== currentPageUrl) {
         console.log('Page changed, clearing conversation state');
@@ -109,6 +118,13 @@ async function restoreState() {
           document.getElementById('commitBtn').classList.remove('hidden');
         }
       }
+      if (result.latestCompleteWARMER) {
+        latestCompleteWARMER = result.latestCompleteWARMER;
+        // Show WARMER commit button if we have a complete WARMER
+        if (latestCompleteWARMER) {
+          document.getElementById('commitWarmerBtn').classList.remove('hidden');
+        }
+      }
       if (result.userInitials) {
         userInitials = result.userInitials;
       }
@@ -121,15 +137,17 @@ async function restoreState() {
 function clearState() {
   conversationHistory = [];
   latestCompleteUpdate = null;
+  latestCompleteWARMER = null;
   // Keep userInitials - they persist across conversations
 
   // Clear UI
   const chatMessages = document.getElementById('chatMessages');
   chatMessages.innerHTML = '';
   document.getElementById('commitBtn').classList.add('hidden');
+  document.getElementById('commitWarmerBtn').classList.add('hidden');
 
   // Clear storage (keep userInitials)
-  chrome.storage.local.remove(['conversationHistory', 'latestCompleteUpdate', 'pageUrl']);
+  chrome.storage.local.remove(['conversationHistory', 'latestCompleteUpdate', 'latestCompleteWARMER', 'pageUrl']);
 }
 
 // Set up event listeners
@@ -158,6 +176,9 @@ function setupEventListeners() {
   // SE Weekly Update
   document.getElementById('seWeeklyBtn').addEventListener('click', completeSEWeeklyUpdate);
 
+  // WARMER
+  document.getElementById('warmerBtn').addEventListener('click', completeWARMER);
+
   // Chat
   document.getElementById('sendChatBtn').addEventListener('click', sendChatMessage);
   document.getElementById('chatInput').addEventListener('keydown', (e) => {
@@ -167,6 +188,7 @@ function setupEventListeners() {
     }
   });
   document.getElementById('commitBtn').addEventListener('click', commitUpdate);
+  document.getElementById('commitWarmerBtn').addEventListener('click', commitWARMER);
 }
 
 // Toggle settings panel
@@ -232,6 +254,40 @@ async function checkSEWeeklyUpdate() {
   }
 }
 
+// Check if WARMER fields exist on the page
+async function checkWARMER() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    chrome.tabs.sendMessage(
+      tab.id,
+      { action: 'checkWARMER' },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.log('Content script not ready or WARMER fields not found');
+          return;
+        }
+
+        if (response && response.exists) {
+          // Mark as available
+          warmerAvailable = true;
+          warmerCurrentStateValue = response.currentStateValue || '';
+          warmerFutureStateValue = response.futureStateValue || '';
+          warmerProposedArchValue = response.proposedArchValue || '';
+          userInitials = response.userInitials;
+          opportunityTitle = response.opportunityTitle;
+
+          // Show the quick actions section and WARMER button
+          document.getElementById('quickActionsSection').classList.remove('hidden');
+          document.getElementById('warmerBtn').classList.remove('hidden');
+        }
+      }
+    );
+  } catch (error) {
+    console.error('Error checking WARMER fields:', error);
+  }
+}
+
 // Complete SE Weekly Update (quick action)
 async function completeSEWeeklyUpdate() {
   try {
@@ -248,6 +304,51 @@ async function completeSEWeeklyUpdate() {
 
     if (seCurrentValue) {
       prompt += `\n\nCurrent content:\n${seCurrentValue}`;
+    }
+
+    // Initialize conversation with this first message
+    conversationHistory = [
+      {
+        role: 'user',
+        content: prompt
+      }
+    ];
+
+    // Get response from Vera
+    const assistantMessage = await callVera();
+
+    if (assistantMessage) {
+      handleVeraResponse(assistantMessage);
+    }
+  } catch (error) {
+    showStatus('Error: ' + error.message, 'error');
+  }
+}
+
+// Complete WARMER (quick action)
+async function completeWARMER() {
+  try {
+    // Build the initial prompt
+    let prompt = 'Please complete my WARMER assessment.';
+
+    if (opportunityTitle) {
+      prompt += `\n\nOpportunity title: ${opportunityTitle}`;
+    }
+
+    if (userInitials) {
+      prompt += `\n\nMy initials are: ${userInitials}`;
+    }
+
+    if (warmerCurrentStateValue) {
+      prompt += `\n\nCurrent State Workflow and Architecture (existing content):\n${warmerCurrentStateValue}`;
+    }
+
+    if (warmerFutureStateValue) {
+      prompt += `\n\nFuture State Vision (existing content):\n${warmerFutureStateValue}`;
+    }
+
+    if (warmerProposedArchValue) {
+      prompt += `\n\nProposed Architecture (existing content):\n${warmerProposedArchValue}`;
     }
 
     // Initialize conversation with this first message
@@ -311,6 +412,15 @@ function handleVeraResponse(response) {
     latestCompleteUpdate = response;
     // Show commit button for SE updates
     document.getElementById('commitBtn').classList.remove('hidden');
+    // Save updated state
+    saveState();
+  }
+
+  // Check if response starts with [WARMER Current State] and WARMER fields are available
+  if (response.trim().startsWith('[WARMER Current State]') && warmerAvailable) {
+    latestCompleteWARMER = response;
+    // Show commit button for WARMER
+    document.getElementById('commitWarmerBtn').classList.remove('hidden');
     // Save updated state
     saveState();
   }
@@ -410,6 +520,16 @@ async function commitUpdate() {
   insertUpdateIntoPage(latestCompleteUpdate);
 }
 
+// Commit WARMER to page
+async function commitWARMER() {
+  if (!latestCompleteWARMER) {
+    showStatus('No complete WARMER to commit', 'error');
+    return;
+  }
+
+  insertWARMERIntoPage(latestCompleteWARMER);
+}
+
 // Insert update into the page
 async function insertUpdateIntoPage(text) {
   try {
@@ -438,4 +558,72 @@ async function insertUpdateIntoPage(text) {
   } catch (error) {
     showStatus('Error inserting text: ' + error.message, 'error');
   }
+}
+
+// Insert WARMER into the page
+async function insertWARMERIntoPage(text) {
+  try {
+    showStatus('Inserting WARMER into fields...', 'loading');
+
+    // Parse the WARMER sections from the response
+    const sections = parseWARMERSections(text);
+
+    if (!sections.currentState || !sections.futureState || !sections.proposedArch) {
+      showStatus('Failed to parse WARMER sections', 'error');
+      return;
+    }
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    chrome.tabs.sendMessage(
+      tab.id,
+      {
+        action: 'fillWARMER',
+        currentState: sections.currentState,
+        futureState: sections.futureState,
+        proposedArch: sections.proposedArch
+      },
+      (fillResponse) => {
+        if (chrome.runtime.lastError || !fillResponse || !fillResponse.success) {
+          showStatus('Failed to insert WARMER', 'error');
+          return;
+        }
+
+        showStatus('WARMER completed successfully!', 'success');
+        setTimeout(() => {
+          window.close();
+        }, 1500);
+      }
+    );
+  } catch (error) {
+    showStatus('Error inserting WARMER: ' + error.message, 'error');
+  }
+}
+
+// Parse WARMER sections from Vera's response
+function parseWARMERSections(text) {
+  const sections = {
+    currentState: '',
+    futureState: '',
+    proposedArch: ''
+  };
+
+  // Split by section headers
+  const currentStateMatch = text.match(/\[WARMER Current State\]([\s\S]*?)(?=\[WARMER Future State\]|$)/);
+  const futureStateMatch = text.match(/\[WARMER Future State\]([\s\S]*?)(?=\[WARMER Proposed Architecture\]|$)/);
+  const proposedArchMatch = text.match(/\[WARMER Proposed Architecture\]([\s\S]*?)$/);
+
+  if (currentStateMatch) {
+    sections.currentState = currentStateMatch[1].trim();
+  }
+
+  if (futureStateMatch) {
+    sections.futureState = futureStateMatch[1].trim();
+  }
+
+  if (proposedArchMatch) {
+    sections.proposedArch = proposedArchMatch[1].trim();
+  }
+
+  return sections;
 }
