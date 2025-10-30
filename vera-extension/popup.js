@@ -294,6 +294,10 @@ async function checkWARMER() {
 // Complete SE Weekly Update (quick action)
 async function completeSEWeeklyUpdate() {
   try {
+    // Get any additional context from chat input
+    const chatInput = document.getElementById('chatInput');
+    const additionalContext = chatInput.value.trim();
+
     // Build the initial prompt
     let prompt = 'Please complete my SE weekly update.';
 
@@ -309,9 +313,16 @@ async function completeSEWeeklyUpdate() {
       prompt += `\n\nMy initials are: ${userInitials}`;
     }
 
+    if (additionalContext) {
+      prompt += `\n\nAdditional context: ${additionalContext}`;
+    }
+
     if (seCurrentValue) {
       prompt += `\n\nCurrent content:\n${seCurrentValue}`;
     }
+
+    // Clear the input box
+    chatInput.value = '';
 
     // Initialize conversation with this first message
     conversationHistory = [
@@ -335,6 +346,10 @@ async function completeSEWeeklyUpdate() {
 // Complete WARMER (quick action)
 async function completeWARMER() {
   try {
+    // Get any additional context from chat input
+    const chatInput = document.getElementById('chatInput');
+    const additionalContext = chatInput.value.trim();
+
     // Build the initial prompt
     let prompt = 'Please complete my WARMER assessment.';
 
@@ -350,6 +365,10 @@ async function completeWARMER() {
       prompt += `\n\nMy initials are: ${userInitials}`;
     }
 
+    if (additionalContext) {
+      prompt += `\n\nAdditional context: ${additionalContext}`;
+    }
+
     if (warmerCurrentStateValue) {
       prompt += `\n\nCurrent State Workflow and Architecture (existing content):\n${warmerCurrentStateValue}`;
     }
@@ -361,6 +380,9 @@ async function completeWARMER() {
     if (warmerProposedArchValue) {
       prompt += `\n\nProposed Architecture (existing content):\n${warmerProposedArchValue}`;
     }
+
+    // Clear the input box
+    chatInput.value = '';
 
     // Initialize conversation with this first message
     conversationHistory = [
