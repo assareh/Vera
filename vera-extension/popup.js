@@ -24,17 +24,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load settings
   await loadSettings();
 
-  // Restore conversation state (will check URL match)
+  // Check field availability BEFORE restoring state
+  // This ensures the flags are set when we decide whether to show buttons
+  await checkSEWeeklyUpdate();
+  await checkWARMER();
+
+  // Restore conversation state (will check URL match and field availability)
   await restoreState();
 
   // Set up event listeners
   setupEventListeners();
-
-  // Check if SE Weekly Update field exists on the page
-  await checkSEWeeklyUpdate();
-
-  // Check if WARMER fields exist on the page
-  await checkWARMER();
 
   // Focus on chat input
   document.getElementById('chatInput').focus();
@@ -114,15 +113,15 @@ async function restoreState() {
       }
       if (result.latestCompleteUpdate) {
         latestCompleteUpdate = result.latestCompleteUpdate;
-        // Show commit button if we have a complete update
-        if (latestCompleteUpdate) {
+        // Show commit button if we have a complete update AND field is available
+        if (latestCompleteUpdate && seWeeklyUpdateAvailable) {
           document.getElementById('commitBtn').classList.remove('hidden');
         }
       }
       if (result.latestCompleteWARMER) {
         latestCompleteWARMER = result.latestCompleteWARMER;
-        // Show WARMER commit button if we have a complete WARMER
-        if (latestCompleteWARMER) {
+        // Show WARMER commit button if we have a complete WARMER AND fields are available
+        if (latestCompleteWARMER && warmerAvailable) {
           document.getElementById('commitWarmerBtn').classList.remove('hidden');
         }
       }
