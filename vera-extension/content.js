@@ -16,11 +16,15 @@ function init() {
         // Try to get opportunity title from modal
         const opportunityTitle = getOpportunityTitle();
 
+        // Try to get customer name
+        const customerName = getCustomerName();
+
         sendResponse({
           exists: true,
           currentValue: seField.value || '',
           userInitials: userInitials,
-          opportunityTitle: opportunityTitle
+          opportunityTitle: opportunityTitle,
+          customerName: customerName
         });
       } else {
         sendResponse({ exists: false });
@@ -47,13 +51,17 @@ function init() {
         // Try to get opportunity title from modal
         const opportunityTitle = getOpportunityTitle();
 
+        // Try to get customer name
+        const customerName = getCustomerName();
+
         sendResponse({
           exists: true,
           currentStateValue: currentStateField.value || '',
           futureStateValue: futureStateField.value || '',
           proposedArchValue: proposedArchField.value || '',
           userInitials: userInitials,
-          opportunityTitle: opportunityTitle
+          opportunityTitle: opportunityTitle,
+          customerName: customerName
         });
       } else {
         sendResponse({ exists: false });
@@ -103,6 +111,29 @@ function getOpportunityTitle() {
     return null;
   } catch (error) {
     console.error('Error getting opportunity title:', error);
+    return null;
+  }
+}
+
+// Get customer name from account label
+function getCustomerName() {
+  try {
+    // Look for anchor element with class containing "account-label"
+    const accountLabel = document.querySelector('a[class*="account-label"]');
+    if (accountLabel) {
+      // Try to get text from span child first
+      const span = accountLabel.querySelector('span');
+      if (span && span.textContent) {
+        return span.textContent.trim();
+      }
+      // Fallback to direct text content
+      if (accountLabel.textContent) {
+        return accountLabel.textContent.trim();
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting customer name:', error);
     return null;
   }
 }

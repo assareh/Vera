@@ -4,6 +4,7 @@ let veraEndpoint = 'http://localhost:8000';
 let conversationHistory = [];
 let userInitials = null;
 let opportunityTitle = null;
+let customerName = null;
 let latestCompleteUpdate = null;
 let latestCompleteWARMER = null;
 let seWeeklyUpdateAvailable = false;
@@ -242,6 +243,7 @@ async function checkSEWeeklyUpdate() {
           seCurrentValue = response.currentValue || '';
           userInitials = response.userInitials;
           opportunityTitle = response.opportunityTitle;
+          customerName = response.customerName;
 
           // Show the quick actions section and SE button
           document.getElementById('quickActionsSection').classList.remove('hidden');
@@ -276,6 +278,7 @@ async function checkWARMER() {
           warmerProposedArchValue = response.proposedArchValue || '';
           userInitials = response.userInitials;
           opportunityTitle = response.opportunityTitle;
+          customerName = response.customerName;
 
           // Show the quick actions section and WARMER button
           document.getElementById('quickActionsSection').classList.remove('hidden');
@@ -293,6 +296,10 @@ async function completeSEWeeklyUpdate() {
   try {
     // Build the initial prompt
     let prompt = 'Please complete my SE weekly update.';
+
+    if (customerName) {
+      prompt += `\n\nCustomer name: ${customerName}`;
+    }
 
     if (opportunityTitle) {
       prompt += `\n\nOpportunity title: ${opportunityTitle}`;
@@ -330,6 +337,10 @@ async function completeWARMER() {
   try {
     // Build the initial prompt
     let prompt = 'Please complete my WARMER assessment.';
+
+    if (customerName) {
+      prompt += `\n\nCustomer name: ${customerName}`;
+    }
 
     if (opportunityTitle) {
       prompt += `\n\nOpportunity title: ${opportunityTitle}`;
