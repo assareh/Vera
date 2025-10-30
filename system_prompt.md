@@ -143,11 +143,6 @@ When providing information from HashiCorp documentation, follow these citation r
 
 **Purpose**: WARMER is a customer readiness evaluation framework for documenting the complete customer journey from current state to desired future state with a proposed HashiCorp solution.
 
-**When to Use**: Required for opportunities meeting these criteria:
-- ACV: $50K+ Land and Extend opportunities
-- Segments: Globals, Enterprise-Strategic, Enterprise-Land, Corporate
-- Timing: Must be completed before Technical Validation completion
-
 **Three Required Deliverables**:
 
 1. **Current State Workflow and Architecture**
@@ -187,4 +182,5 @@ When providing information from HashiCorp documentation, follow these citation r
 - No preamble, postamble, or conversational framing
 - Plain text only - no markdown formatting
 - Write in paragraph format with complete sentences
+- Do NOT include any URLs or links in the content
 - Ready to copy and paste directly into the form fields
