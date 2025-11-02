@@ -7,6 +7,7 @@ import signal
 import sys
 import re
 import threading
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Generator
@@ -22,6 +23,30 @@ from hashicorp_pdf_search import initialize_pdf_search
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure tool debug logging
+tools_logger = logging.getLogger("vera.tools")
+if config.DEBUG_TOOLS:
+    tools_logger.setLevel(logging.DEBUG)
+
+    # Create file handler
+    log_file = Path(config.DEBUG_TOOLS_LOG_FILE)
+    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+
+    # Add handler to logger
+    tools_logger.addHandler(file_handler)
+
+    print(f"Tool debug logging enabled: {log_file.absolute()}")
+else:
+    tools_logger.setLevel(logging.WARNING)
 
 # Global variables for caching
 _system_prompt_cache: Optional[str] = None
@@ -131,15 +156,47 @@ def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0
 
 def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
     """Execute a tool by name with given input."""
+    # Log tool call
+    if config.DEBUG_TOOLS:
+        tools_logger.debug("="*80)
+        tools_logger.debug(f"TOOL CALL: {tool_name}")
+        tools_logger.debug(f"INPUT: {json.dumps(tool_input, indent=2)}")
+
     for tool in ALL_TOOLS:
         if tool.name == tool_name:
             try:
                 result = tool.func(**tool_input)
-                return str(result)
-            except Exception as e:
-                return f"Error executing tool {tool_name}: {str(e)}"
+                result_str = str(result)
 
-    return f"Tool {tool_name} not found"
+                # Log tool response
+                if config.DEBUG_TOOLS:
+                    # Truncate very long responses for readability
+                    if len(result_str) > 1000:
+                        truncated = result_str[:1000] + f"\n... (truncated, total length: {len(result_str)} chars)"
+                        tools_logger.debug(f"RESPONSE: {truncated}")
+                    else:
+                        tools_logger.debug(f"RESPONSE: {result_str}")
+                    tools_logger.debug("="*80 + "\n")
+
+                return result_str
+            except Exception as e:
+                error_msg = f"Error executing tool {tool_name}: {str(e)}"
+
+                # Log error
+                if config.DEBUG_TOOLS:
+                    tools_logger.error(f"ERROR: {error_msg}")
+                    tools_logger.debug("="*80 + "\n")
+
+                return error_msg
+
+    not_found_msg = f"Tool {tool_name} not found"
+
+    # Log error
+    if config.DEBUG_TOOLS:
+        tools_logger.error(f"ERROR: {not_found_msg}")
+        tools_logger.debug("="*80 + "\n")
+
+    return not_found_msg
 
 
 def stream_chat_response(messages: list, temperature: float, max_iterations: int = 5) -> Generator[str, None, None]:

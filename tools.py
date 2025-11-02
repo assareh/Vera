@@ -1,14 +1,13 @@
 """Tool definitions for Vera."""
-import os
 import re
 import logging
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 from langchain.tools import Tool
 from pydantic import BaseModel, Field
 from duckduckgo_search import DDGS
+import ollama
 import config
 from hashicorp_pdf_search import search_pdfs
 
@@ -335,76 +334,185 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
     # === PART 2: Search Online Documentation ===
     logger.info("[HASHICORP_SEARCH] Searching online documentation...")
 
-    # Build search query with site restriction
-    search_query = f"site:hashicorp.com {query}"
-
-    # If specific product is requested, add it to the query
+    # Determine site restriction based on product
     if product:
         product_lower = product.lower().strip()
-        search_query = f"site:hashicorp.com/{product_lower} {query}"
-        logger.info(f"[HASHICORP_SEARCH] Product-specific search: {search_query}")
+        site = f"hashicorp.com/{product_lower}"
+        logger.info(f"[HASHICORP_SEARCH] Product-specific search: {product_lower}")
+    else:
+        site = "hashicorp.com"
 
-    # Perform search with minimal retry logic for rate limits
-    # Note: PDF search is primary, web search is supplementary
-    max_retries = 1  # Reduced from 3 to avoid hammering DuckDuckGo
-    retry_delay = 8  # Increased from 2 to respect rate limits
+    # Use the unified web_search function
+    web_results = web_search(query, max_results=max_results, site=site)
 
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"[HASHICORP_SEARCH] Executing web search (attempt {attempt + 1}/{max_retries}): {search_query}")
-
-            # Suppress async warnings from duckduckgo_search library
-            import warnings
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*AsyncSession.*")
-                with DDGS() as ddgs:
-                    results = list(ddgs.text(search_query, max_results=max_results))
-
-            logger.info(f"[HASHICORP_SEARCH] Found {len(results)} web results")
-
-            if results:
-                output_sections.append("=== Online Documentation ===\n")
-                output_sections.append(f"Found {len(results)} online documentation result(s):\n")
-
-                for idx, result in enumerate(results, 1):
-                    title = result.get("title", "No title")
-                    url = result.get("href", "")
-                    description = result.get("body", "No description")
-
-                    output_sections.append(f"\n{idx}. {title}")
-                    output_sections.append(f"   URL: {url}")
-                    output_sections.append(f"   {description}")
-                    output_sections.append("")
-
-            break  # Success, exit retry loop
-
-        except Exception as e:
-            error_str = str(e)
-
-            # Check if it's a rate limit error
-            if "ratelimit" in error_str.lower():
-                logger.info(f"[HASHICORP_SEARCH] Rate limited by DuckDuckGo - skipping web search")
-            else:
-                logger.warning(f"[HASHICORP_SEARCH] Web search failed: {error_str}")
-
-            if attempt < max_retries - 1:
-                logger.info(f"[HASHICORP_SEARCH] Waiting {retry_delay} seconds before retry...")
-                time.sleep(retry_delay)
-                continue
-
-            # If it's the last attempt, add error note
-            if attempt == max_retries - 1:
-                output_sections.append("=== Online Documentation ===\n")
-                if "ratelimit" in error_str.lower():
-                    output_sections.append("Note: Web search temporarily rate-limited. Showing PDF results only.\n")
-                else:
-                    output_sections.append(f"Note: Web search unavailable ({error_str}). Showing PDF results only.\n")
+    # Add web results to output
+    if web_results and "failed" not in web_results.lower():
+        output_sections.append("=== Online Documentation ===\n")
+        output_sections.append(web_results)
 
     # Return combined results
     if output_sections:
         return "\n".join(output_sections)
     else:
         return f"No HashiCorp documentation found for query: '{query}'"
+
+
+def ollama_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
+    """Search the web using Ollama's search API.
+
+    Args:
+        query: The search query
+        max_results: Maximum number of results (not enforced by API, but used for consistency)
+
+    Returns:
+        List of search result dictionaries with 'title', 'url', and 'description' keys
+
+    Raises:
+        Exception: If API key is not configured or API call fails
+    """
+    if not config.OLLAMA_API_KEY:
+        raise ValueError("OLLAMA_API_KEY not configured")
+
+    logger.info(f"[OLLAMA_SEARCH] Searching with query: {query}")
+
+    try:
+        # Create client with API key
+        client = ollama.Client(headers={"Authorization": f"Bearer {config.OLLAMA_API_KEY}"})
+
+        # Use the official web_search method
+        response = client.web_search(query)
+
+        results = []
+
+        # Parse response: response is a dict with 'results' key containing list of results
+        if hasattr(response, 'get'):
+            items = response.get('results', [])
+        elif hasattr(response, 'results'):
+            items = response.results
+        else:
+            # If response is already a list
+            items = response if isinstance(response, list) else []
+
+        # Limit to max_results
+        for item in items[:max_results]:
+            results.append({
+                "title": item.get("title", "No title"),
+                "url": item.get("url", ""),
+                "description": item.get("content", "No description")
+            })
+
+        logger.info(f"[OLLAMA_SEARCH] Found {len(results)} results")
+        return results
+
+    except Exception as e:
+        logger.error(f"[OLLAMA_SEARCH] Search failed: {e}")
+        import traceback
+        logger.error(f"[OLLAMA_SEARCH] Traceback: {traceback.format_exc()}")
+        raise
+
+
+def ddg_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
+    """Search the web using DuckDuckGo (free, rate-limited).
+
+    Args:
+        query: The search query
+        max_results: Maximum number of results
+
+    Returns:
+        List of search result dictionaries with 'title', 'url', and 'description' keys
+
+    Raises:
+        Exception: If search fails
+    """
+    logger.info(f"[DDG_SEARCH] Searching with query: {query}")
+
+    try:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*AsyncSession.*")
+            with DDGS() as ddgs:
+                raw_results = list(ddgs.text(query, max_results=max_results))
+
+        results = []
+        for item in raw_results:
+            results.append({
+                "title": item.get("title", "No title"),
+                "url": item.get("href", ""),
+                "description": item.get("body", "No description")
+            })
+
+        logger.info(f"[DDG_SEARCH] Found {len(results)} results")
+        return results
+
+    except Exception as e:
+        logger.error(f"[DDG_SEARCH] Search failed: {e}")
+        raise
+
+
+def web_search(query: str, max_results: int = 10, site: str = "") -> str:
+    """Search the web using Ollama API if available, otherwise fall back to DuckDuckGo.
+
+    Args:
+        query: The search query
+        max_results: Maximum number of results (default 10)
+        site: Optional site restriction (e.g., 'hashicorp.com')
+
+    Returns:
+        Formatted string with search results
+    """
+    # Build search query with site restriction if provided
+    search_query = f"site:{site} {query}" if site else query
+
+    results = []
+    search_method = "unknown"
+
+    # Try Ollama first if API key is configured
+    if config.OLLAMA_API_KEY:
+        try:
+            logger.info("[WEB_SEARCH] Using Ollama search API")
+            results = ollama_web_search(search_query, max_results)
+            search_method = "Ollama"
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Ollama search failed, falling back to DuckDuckGo: {e}")
+            # Fall through to DuckDuckGo
+
+    # Fall back to DuckDuckGo if Ollama not available or failed
+    if not results:
+        try:
+            logger.info("[WEB_SEARCH] Using DuckDuckGo search")
+            results = ddg_web_search(search_query, max_results)
+            search_method = "DuckDuckGo"
+        except Exception as e:
+            error_str = str(e)
+            if "ratelimit" in error_str.lower():
+                return "Web search is currently rate-limited. Please try again in a few moments or configure OLLAMA_API_KEY in your .env file for unlimited searches."
+            else:
+                return f"Web search failed: {error_str}"
+
+    # Format results
+    if not results:
+        return f"No web results found for query: '{query}'"
+
+    output = [f"Found {len(results)} web result(s) via {search_method}:\n"]
+
+    for idx, result in enumerate(results, 1):
+        output.append(f"\n{idx}. {result['title']}")
+        output.append(f"   URL: {result['url']}")
+        output.append(f"   {result['description']}")
+        output.append("")
+
+    return "\n".join(output)
+
+
+class WebSearchInput(BaseModel):
+    """Input schema for web search tool."""
+    query: str = Field(
+        description="The search query (e.g., 'Python async programming best practices', 'Docker container networking')"
+    )
+    max_results: int = Field(
+        default=10,
+        description="Maximum number of results to return. Default is 10."
+    )
 
 
 # Define the tools
@@ -436,10 +544,18 @@ hashicorp_docs_search_tool = Tool(
     args_schema=HashiCorpDocsSearchInput
 )
 
+web_search_tool = Tool(
+    name="web_search",
+    description="Search the web for general information using Ollama API (if configured) or DuckDuckGo. Use this for finding current information, documentation, tutorials, Stack Overflow answers, or any online resources. Returns titles, URLs, and descriptions of relevant pages.",
+    func=web_search,
+    args_schema=WebSearchInput
+)
+
 # Export all tools
 ALL_TOOLS = [
     current_date_tool,
     customer_notes_search_tool,
     read_customer_note_tool,
-    hashicorp_docs_search_tool
+    hashicorp_docs_search_tool,
+    web_search_tool
 ]
