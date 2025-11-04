@@ -1,27 +1,58 @@
 # Ivan 🤖
 
-A Flask-based chatbot application with tool calling capabilities, providing an OpenAI-compatible API for local LLM backends.
+An intelligent assistant designed to optimize solutions engineering workflows.
 
-## Features
+## Why Ivan?
 
-- 🔧 **Tool Calling**: Built-in tools for current date/time and customer meeting notes search
-- 🔌 **OpenAI-Compatible API**: Works with any OpenAI-compatible client
-- 🎯 **Multiple Backends**: Supports both Ollama and LM Studio
-- 📝 **Smart Caching**: Efficient system prompt caching based on file modification time
-- 🌐 **Optional Web UI**: Integrated Open Web UI for easy interaction
-- 🧩 **Chrome Extension**: Browser extension for SE Weekly Updates automation
-- ⚙️ **Configurable**: Flexible CLI and environment variable configuration
+<table>
+<tr>
+<td align="center" width="25%">
+<h3>🔒 Fully Private</h3>
+<p>Private inference on your own machine(s). Your data stays yours - no third parties, no tracking.</p>
+</td>
+<td align="center" width="25%">
+<h3>🧩 Browser Extension</h3>
+<p>Chrome extension for seamless Salesforce integration and form automation</p>
+</td>
+<td align="center" width="25%">
+<h3>📝 Auto Note Integration</h3>
+<p>Automatically integrates with your note system - no more copy-pasting meeting notes</p>
+</td>
+<td align="center" width="25%">
+<h3>📚 Chat History</h3>
+<p>Never lose context - complete conversation history preserved across sessions</p>
+</td>
+</tr>
+<tr>
+<td align="center" width="25%">
+<h3>🔌 OpenAI Compatible</h3>
+<p>Standard API that integrates seamlessly with existing tools and workflows</p>
+</td>
+<td align="center" width="25%">
+<h3>🎯 Multiple Backends</h3>
+<p>Supports both Ollama and LM Studio - use any local LLM you prefer</p>
+</td>
+<td align="center" width="25%">
+<h3>✨ Smart Suggestions</h3>
+<p>AI-powered contextual suggestions and auto-completion for faster workflows</p>
+</td>
+<td align="center" width="25%">
+<h3>💬 Chat Threads</h3>
+<p>Organize conversations with full thread support through Open Web UI integration</p>
+</td>
+</tr>
+</table>
 
 ## Chrome Extension
 
-Ivan includes a Chrome extension for automating SE Weekly Updates with AI assistance.
+Ivan includes a Chrome extension for automating SE Weekly Updates and WARMER with AI assistance, all directly from within your browser.
 
 ![Ivan Extension Screenshot](docs/images/extension-screenshot.png)
 
 ### Features
 
-- **Quick Actions**: One-click SE Weekly Update completion
-- **Smart Context**: Automatically extracts opportunity title and user initials from the page
+- **Quick Actions**: One-click SE Weekly Update completion, One-click WARMER completion
+- **Smart Context**: Automatically extracts opportunity title and user initials from the page, searches your customer notes, and retrieves relevant information
 - **Chat Interface**: Conversational refinement of updates before committing
 - **Auto-Fill**: Inserts completed updates directly into Salesforce fields
 
