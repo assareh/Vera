@@ -2,7 +2,7 @@
 
 // Initialize the extension
 function init() {
-  console.log('Vera Assistant content script loaded');
+  console.log('Ivan Assistant content script loaded');
 
   // Listen for messages from popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

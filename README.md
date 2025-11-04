@@ -1,4 +1,4 @@
-# Vera 🤖
+# Ivan 🤖
 
 A Flask-based chatbot application with tool calling capabilities, providing an OpenAI-compatible API for local LLM backends.
 
@@ -14,9 +14,9 @@ A Flask-based chatbot application with tool calling capabilities, providing an O
 
 ## Chrome Extension
 
-Vera includes a Chrome extension for automating SE Weekly Updates with AI assistance.
+Ivan includes a Chrome extension for automating SE Weekly Updates with AI assistance.
 
-![Vera Extension Screenshot](docs/images/extension-screenshot.png)
+![Ivan Extension Screenshot](docs/images/extension-screenshot.png)
 
 ### Features
 
@@ -29,13 +29,13 @@ Vera includes a Chrome extension for automating SE Weekly Updates with AI assist
 
 1. Navigate to `chrome://extensions` in Chrome
 2. Enable "Developer mode"
-3. Click "Load unpacked" and select the `vera-extension` directory
-4. Configure the extension to point to your Vera instance (default: `http://localhost:8000`)
+3. Click "Load unpacked" and select the `ivan-extension` directory
+4. Configure the extension to point to your Ivan instance (default: `http://localhost:8000`)
 
 ### Usage
 
 1. Open a Salesforce opportunity with an SE Weekly Update field
-2. Click the Vera extension icon
+2. Click the Ivan extension icon
 3. Click "Complete SE Weekly Update" to generate an update
 4. Review and refine the generated content through chat
 5. Click "Commit" to insert the update into the field
@@ -46,48 +46,48 @@ Vera includes a Chrome extension for automating SE Weekly Updates with AI assist
 
 ```bash
 # Clone or navigate to the project directory
-cd Vera
+cd Ivan
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### Running Vera
+### Running Ivan
 
 **Basic usage (with Ollama):**
 ```bash
-python vera.py
+python ivan.py
 ```
 
 **With LM Studio:**
 ```bash
-python vera.py --backend lmstudio --model your-model-name
+python ivan.py --backend lmstudio --model your-model-name
 ```
 
 **Without Web UI:**
 ```bash
-python vera.py --no-webui
+python ivan.py --no-webui
 ```
 
 **Custom port:**
 ```bash
-python vera.py --port 8080
+python ivan.py --port 8080
 ```
 
 ### Configuration
 
-Vera can be configured via environment variables:
+Ivan can be configured via environment variables:
 
 ```bash
 # Backend configuration
-export VERA_BACKEND=ollama          # or lmstudio
+export IVAN_BACKEND=ollama          # or lmstudio
 export BACKEND_MODEL=llama3.2       # your model name
 export OLLAMA_ENDPOINT=http://localhost:11434
 export LMSTUDIO_ENDPOINT=http://localhost:1234/v1
 
-# Vera settings
-export VERA_PORT=8000
-export VERA_TEMPERATURE=0.0
+# Ivan settings
+export IVAN_PORT=8000
+export IVAN_TEMPERATURE=0.0
 export SYSTEM_PROMPT_PATH=system_prompt.md
 export NOTES_DIR=notes
 export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
@@ -97,14 +97,14 @@ export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
 
 ### With Open Web UI
 
-1. Start Vera: `python vera.py`
+1. Start Ivan: `python ivan.py`
 2. Open Web UI will automatically start on port 8001 (or port + 1)
 3. Access the Web UI at `http://localhost:8001`
-4. Configure Open Web UI to use Vera at `http://localhost:8000/v1`
+4. Configure Open Web UI to use Ivan at `http://localhost:8000/v1`
 
 ### With API Clients
 
-Vera provides an OpenAI-compatible API:
+Ivan provides an OpenAI-compatible API:
 
 ```python
 import openai
@@ -115,7 +115,7 @@ client = openai.OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="wwtfo/vera",
+    model="wwtfo/ivan",
     messages=[
         {"role": "user", "content": "What's the current date?"}
     ]
@@ -130,7 +130,7 @@ print(response.choices[0].message.content)
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "wwtfo/vera",
+    "model": "wwtfo/ivan",
     "messages": [{"role": "user", "content": "What day is it?"}],
     "temperature": 0
   }'
@@ -138,7 +138,7 @@ curl http://localhost:8000/v1/chat/completions \
 
 ## Tools
 
-Vera comes with built-in tools:
+Ivan comes with built-in tools:
 
 ### 1. Current Date Tool
 Get the current date and time in any format.
@@ -183,7 +183,7 @@ Read the full content of a specific customer meeting note.
 
 ### System Prompt
 
-Edit `system_prompt.md` to customize Vera's behavior. The file is automatically cached and reloaded when modified.
+Edit `system_prompt.md` to customize Ivan's behavior. The file is automatically cached and reloaded when modified.
 
 ### Adding Tools
 
@@ -220,10 +220,10 @@ ALL_TOOLS.append(my_tool)
 ## CLI Options
 
 ```bash
-python vera.py --help
+python ivan.py --help
 
 Options:
-  --port INTEGER                 Port to run Vera on (default: 8000)
+  --port INTEGER                 Port to run Ivan on (default: 8000)
   --backend [ollama|lmstudio]   Backend to use (default: ollama)
   --model TEXT                   Model name to use with backend
   --no-webui                     Don't start Open Web UI
@@ -233,7 +233,7 @@ Options:
 
 ## Requirements
 
-- **Python 3.8+** for Vera core functionality
+- **Python 3.8+** for Ivan core functionality
 - **Python 3.11-3.12** for Open Web UI integration (optional)
   - If you have Python 3.14+, use `--no-webui` flag or set up a separate Python 3.11/3.12 environment
 - Ollama or LM Studio running locally
@@ -264,14 +264,14 @@ pip install open-webui
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-# Run with: python vera.py --no-webui
+# Run with: python ivan.py --no-webui
 ```
 
 ## Architecture
 
 ```
-Vera
-├── vera.py           # Main Flask application
+Ivan
+├── ivan.py           # Main Flask application
 ├── config.py         # Configuration management
 ├── tools.py          # Tool definitions
 ├── system_prompt.md  # System prompt (customizable)
@@ -281,7 +281,7 @@ Vera
 
 ## Troubleshooting
 
-**Vera can't connect to Ollama/LM Studio:**
+**Ivan can't connect to Ollama/LM Studio:**
 - Ensure your backend is running
 - Check the endpoint configuration matches your backend
 - Verify the model name is correct

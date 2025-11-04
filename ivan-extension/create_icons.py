@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate placeholder icons for the Vera extension."""
+"""Generate placeholder icons for the Ivan extension."""
 
 from PIL import Image, ImageDraw, ImageFont
 

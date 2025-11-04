@@ -1,19 +1,19 @@
 /* Styles for field highlighting and selection */
 
-.vera-highlight {
+.ivan-highlight {
   outline: 3px solid #4CAF50 !important;
   outline-offset: 2px !important;
   cursor: pointer !important;
   transition: outline 0.2s ease !important;
 }
 
-.vera-selected {
+.ivan-selected {
   outline: 3px solid #2196F3 !important;
   outline-offset: 2px !important;
   box-shadow: 0 0 10px rgba(33, 150, 243, 0.5) !important;
 }
 
-#vera-overlay {
+#ivan-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -28,11 +28,11 @@
   pointer-events: none;
 }
 
-#vera-overlay * {
+#ivan-overlay * {
   pointer-events: auto;
 }
 
-.vera-overlay-message {
+.ivan-overlay-message {
   background: white;
   padding: 15px 30px;
   border-radius: 8px;

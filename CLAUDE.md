@@ -1,16 +1,16 @@
-# Vera Project Documentation for Claude Code
+# Ivan Project Documentation for Claude Code
 
 ## Project Overview
 
-Vera is a Flask-based AI chatbot application that provides an OpenAI-compatible API for local LLM backends (Ollama and LM Studio). It features tool calling capabilities, optional Open Web UI integration, and a Chrome extension for automating SE Weekly Updates in Salesforce.
+Ivan is a Flask-based AI chatbot application that provides an OpenAI-compatible API for local LLM backends (Ollama and LM Studio). It features tool calling capabilities, optional Open Web UI integration, and a Chrome extension for automating SE Weekly Updates in Salesforce.
 
-**Model Name**: `wwtfo/vera` (advertised in API responses)
+**Model Name**: `wwtfo/ivan` (advertised in API responses)
 
 ## Architecture
 
 ### Core Components
 
-1. **vera.py** - Main Flask application
+1. **ivan.py** - Main Flask application
    - Handles OpenAI-compatible `/v1/chat/completions` endpoint
    - Manages tool calling and function execution
    - Implements smart system prompt caching based on file modification time
@@ -32,9 +32,9 @@ Vera is a Flask-based AI chatbot application that provides an OpenAI-compatible 
 
 4. **system_prompt.md** - Customizable system prompt
    - Cached and auto-reloaded on modification
-   - Defines Vera's personality and behavior
+   - Defines Ivan's personality and behavior
 
-### Chrome Extension (vera-extension/)
+### Chrome Extension (ivan-extension/)
 
 Browser extension for automating SE Weekly Updates with AI assistance.
 
@@ -53,8 +53,8 @@ Browser extension for automating SE Weekly Updates with AI assistance.
 ## Directory Structure
 
 ```
-Vera/
-├── vera.py                 # Main Flask application
+Ivan/
+├── ivan.py                 # Main Flask application
 ├── config.py              # Configuration management
 ├── tools.py               # Tool definitions (LangChain)
 ├── system_prompt.md       # System prompt (auto-cached)
@@ -70,7 +70,7 @@ Vera/
 │               └── *.md  # Meeting notes (YYYY-MM-DD_Title.md)
 │
 ├── hashicorp_pdfs/      # HashiCorp PDF documentation cache
-├── vera-extension/      # Chrome extension
+├── ivan-extension/      # Chrome extension
 │   ├── manifest.json
 │   ├── popup.html/js/css
 │   ├── content.js/css
@@ -113,16 +113,16 @@ Vera/
 
 ```bash
 # Backend Selection
-VERA_BACKEND=lmstudio          # or "ollama"
+IVAN_BACKEND=lmstudio          # or "ollama"
 BACKEND_MODEL=openai/gpt-oss-20b  # Model name for backend
 
 # Backend Endpoints
 LMSTUDIO_ENDPOINT=http://localhost:1234/v1
 OLLAMA_ENDPOINT=http://localhost:11434
 
-# Vera Settings
-VERA_PORT=8000
-VERA_TEMPERATURE=0.0
+# Ivan Settings
+IVAN_PORT=8000
+IVAN_TEMPERATURE=0.0
 SYSTEM_PROMPT_PATH=system_prompt.md
 NOTES_DIR=notes
 CUSTOMER_NOTES_DIR=Customer_Notes  # Or absolute path
@@ -153,24 +153,24 @@ pip install -r requirements.txt
 # Optional: Install Open Web UI
 pip install open-webui
 
-# Run Vera
-python vera.py                           # Default: LM Studio, port 8000, with Web UI
-python vera.py --backend ollama          # Use Ollama backend
-python vera.py --no-webui                # Skip Web UI (for Python 3.14+)
-python vera.py --port 8080               # Custom port
-python vera.py --debug                   # Debug mode
+# Run Ivan
+python ivan.py                           # Default: LM Studio, port 8000, with Web UI
+python ivan.py --backend ollama          # Use Ollama backend
+python ivan.py --no-webui                # Skip Web UI (for Python 3.14+)
+python ivan.py --port 8080               # Custom port
+python ivan.py --debug                   # Debug mode
 ```
 
 ### Extension Development
 
 ```bash
-cd vera-extension
+cd ivan-extension
 
 # Load in Chrome:
 # 1. Navigate to chrome://extensions
 # 2. Enable "Developer mode"
 # 3. Click "Load unpacked"
-# 4. Select vera-extension/ directory
+# 4. Select ivan-extension/ directory
 ```
 
 ## Common Tasks
@@ -235,7 +235,7 @@ GET /health
 ### List Models
 ```bash
 GET /v1/models
-# Returns: {"data": [{"id": "wwtfo/vera", ...}]}
+# Returns: {"data": [{"id": "wwtfo/ivan", ...}]}
 ```
 
 ### Chat Completions (OpenAI-compatible)
@@ -244,7 +244,7 @@ POST /v1/chat/completions
 Content-Type: application/json
 
 {
-  "model": "wwtfo/vera",
+  "model": "wwtfo/ivan",
   "messages": [{"role": "user", "content": "..."}],
   "temperature": 0
 }
@@ -269,7 +269,7 @@ python test_hashicorp_search.py
 ## Important Patterns and Conventions
 
 ### System Prompt Caching
-The system prompt is cached based on file modification time (vera.py):
+The system prompt is cached based on file modification time (ivan.py):
 - Reads `system_prompt.md` on first request
 - Subsequent requests check `os.path.getmtime()`
 - Auto-reloads when file changes
@@ -297,7 +297,7 @@ Tools return plain strings. The Flask app converts them to OpenAI-compatible fun
 ### Extension Permissions
 - `activeTab` - Read current Salesforce page
 - `storage` - Save settings
-- Host permission for Vera backend URL
+- Host permission for Ivan backend URL
 
 ## Troubleshooting
 
@@ -327,7 +327,7 @@ Tools return plain strings. The Flask app converts them to OpenAI-compatible fun
 
 - **README.md** - User-facing documentation with setup instructions
 - **SEARCH_ALTERNATIVES.md** - Documentation on search implementation alternatives
-- **vera-extension/README.md** - Extension-specific documentation
+- **ivan-extension/README.md** - Extension-specific documentation
 - **docs/** - Additional documentation and images
 
 ## Git Workflow
@@ -343,10 +343,10 @@ Recent development focus (from git log):
 ## CLI Reference
 
 ```bash
-python vera.py [OPTIONS]
+python ivan.py [OPTIONS]
 
 Options:
-  --port INTEGER                 Port to run Vera on (default: 8000)
+  --port INTEGER                 Port to run Ivan on (default: 8000)
   --backend [ollama|lmstudio]   Backend to use (default: from config)
   --model TEXT                   Model name for backend (default: from config)
   --no-webui                     Don't start Open Web UI

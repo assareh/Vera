@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Vera Assistant",
+  "name": "Ivan Assistant",
   "version": "1.0.0",
-  "description": "AI-powered form filling assistant using Vera",
+  "description": "AI-powered form filling assistant using Ivan",
   "permissions": [
     "activeTab",
     "storage"

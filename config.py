@@ -1,4 +1,4 @@
-"""Configuration management for Vera."""
+"""Configuration management for Ivan."""
 import os
 from typing import Literal
 from dotenv import load_dotenv
@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Backend configuration
-BACKEND_TYPE: Literal["lmstudio", "ollama"] = os.getenv("VERA_BACKEND", "lmstudio")
+BACKEND_TYPE: Literal["lmstudio", "ollama"] = os.getenv("IVAN_BACKEND", "lmstudio")
 
 # LM Studio default endpoint
 LMSTUDIO_ENDPOINT = os.getenv("LMSTUDIO_ENDPOINT", "http://localhost:1234/v1")
@@ -21,14 +21,14 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 # Model name to use with the backend
 BACKEND_MODEL = os.getenv("BACKEND_MODEL", "openai/gpt-oss-20b")
 
-# Vera configuration
-DEFAULT_PORT = int(os.getenv("VERA_PORT", "8000"))
-DEFAULT_TEMPERATURE = float(os.getenv("VERA_TEMPERATURE", "0.0"))
+# Ivan configuration
+DEFAULT_PORT = int(os.getenv("IVAN_PORT", "8000"))
+DEFAULT_TEMPERATURE = float(os.getenv("IVAN_TEMPERATURE", "0.0"))
 SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "system_prompt.md")
 
 # Debug settings
-DEBUG_TOOLS = os.getenv("VERA_DEBUG_TOOLS", "").lower() in ("true", "1", "yes")
-DEBUG_TOOLS_LOG_FILE = os.getenv("VERA_DEBUG_TOOLS_LOG_FILE", "vera_tools_debug.log")
+DEBUG_TOOLS = os.getenv("IVAN_DEBUG_TOOLS", "").lower() in ("true", "1", "yes")
+DEBUG_TOOLS_LOG_FILE = os.getenv("IVAN_DEBUG_TOOLS_LOG_FILE", "ivan_tools_debug.log")
 
 # Notes directory for search tool
 NOTES_DIR = os.getenv("NOTES_DIR", "notes")
@@ -45,5 +45,5 @@ CUSTOMER_ALIASES = {
     # Add more aliases as needed
 }
 
-# Model identifier that Vera advertises
-VERA_MODEL_NAME = "wwtfo/vera"
+# Model identifier that Ivan advertises
+IVAN_MODEL_NAME = "wwtfo/ivan"

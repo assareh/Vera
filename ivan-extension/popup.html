@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vera Assistant</title>
+  <title>Ivan Assistant</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <h1>Vera Assistant</h1>
+      <h1>Ivan Assistant</h1>
       <div class="header-buttons">
         <button id="clearBtn" class="icon-btn" title="Clear conversation">🔄</button>
         <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
@@ -21,8 +21,8 @@
     <div id="settingsPanel" class="settings-panel hidden">
       <h3>Settings</h3>
       <div class="form-group">
-        <label for="veraEndpoint">Vera Endpoint:</label>
-        <input type="text" id="veraEndpoint" placeholder="http://localhost:8000">
+        <label for="ivanEndpoint">Ivan Endpoint:</label>
+        <input type="text" id="ivanEndpoint" placeholder="http://localhost:8000">
       </div>
       <div class="button-group">
         <button id="saveSettings" class="btn btn-primary">Save</button>
@@ -49,7 +49,7 @@
         <div class="chat-input-container">
           <textarea
             id="chatInput"
-            placeholder="Ask Vera anything..."
+            placeholder="Ask Ivan anything..."
             rows="3"
           ></textarea>
           <div class="button-group">

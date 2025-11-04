@@ -1,6 +1,6 @@
-// Popup script for Vera Assistant
+// Popup script for Ivan Assistant
 
-let veraEndpoint = 'http://localhost:8000';
+let ivanEndpoint = 'http://localhost:8000';
 let conversationHistory = [];
 let userInitials = null;
 let opportunityTitle = null;
@@ -40,11 +40,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'veraResponse') {
+    if (message.action === 'ivanResponse') {
       // Response arrived from background
-      handleVeraResponse(message.content);
+      handleIvanResponse(message.content);
       hideStatus();
-    } else if (message.action === 'veraError') {
+    } else if (message.action === 'ivanError') {
       showStatus(message.error, 'error');
     }
   });
@@ -53,10 +53,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Load settings from storage
 async function loadSettings() {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['veraEndpoint'], (result) => {
-      if (result.veraEndpoint) {
-        veraEndpoint = result.veraEndpoint;
-        document.getElementById('veraEndpoint').value = veraEndpoint;
+    chrome.storage.sync.get(['ivanEndpoint'], (result) => {
+      if (result.ivanEndpoint) {
+        ivanEndpoint = result.ivanEndpoint;
+        document.getElementById('ivanEndpoint').value = ivanEndpoint;
       }
       resolve();
     });
@@ -65,10 +65,10 @@ async function loadSettings() {
 
 // Save settings to storage
 async function saveSettings() {
-  const endpoint = document.getElementById('veraEndpoint').value;
+  const endpoint = document.getElementById('ivanEndpoint').value;
   return new Promise((resolve) => {
-    chrome.storage.sync.set({ veraEndpoint: endpoint }, () => {
-      veraEndpoint = endpoint;
+    chrome.storage.sync.set({ ivanEndpoint: endpoint }, () => {
+      ivanEndpoint = endpoint;
       resolve();
     });
   });
@@ -169,7 +169,7 @@ function setupEventListeners() {
     toggleSettings();
   });
   document.getElementById('cancelSettings').addEventListener('click', () => {
-    document.getElementById('veraEndpoint').value = veraEndpoint;
+    document.getElementById('ivanEndpoint').value = ivanEndpoint;
     toggleSettings();
   });
 
@@ -331,11 +331,11 @@ async function completeSEWeeklyUpdate() {
       }
     ];
 
-    // Get response from Vera
-    const assistantMessage = await callVera();
+    // Get response from Ivan
+    const assistantMessage = await callIvan();
 
     if (assistantMessage) {
-      handleVeraResponse(assistantMessage);
+      handleIvanResponse(assistantMessage);
     }
   } catch (error) {
     showStatus('Error: ' + error.message, 'error');
@@ -391,29 +391,29 @@ async function completeWARMER() {
       }
     ];
 
-    // Get response from Vera
-    const assistantMessage = await callVera();
+    // Get response from Ivan
+    const assistantMessage = await callIvan();
 
     if (assistantMessage) {
-      handleVeraResponse(assistantMessage);
+      handleIvanResponse(assistantMessage);
     }
   } catch (error) {
     showStatus('Error: ' + error.message, 'error');
   }
 }
 
-// Call Vera API via background script (persists even if popup closes)
-async function callVera() {
+// Call Ivan API via background script (persists even if popup closes)
+async function callIvan() {
   try {
-    showStatus('Sending to Vera...', 'loading');
+    showStatus('Sending to Ivan...', 'loading');
 
     // Save state before making the call
     await saveState();
 
     // Send message to background script to handle the API call
     chrome.runtime.sendMessage({
-      action: 'callVera',
-      endpoint: veraEndpoint,
+      action: 'callIvan',
+      endpoint: ivanEndpoint,
       messages: conversationHistory
     });
 
@@ -423,13 +423,13 @@ async function callVera() {
 
   } catch (error) {
     showStatus(`Error: ${error.message}`, 'error');
-    console.error('Error calling Vera:', error);
+    console.error('Error calling Ivan:', error);
     return null;
   }
 }
 
-// Handle Vera's response (smart logic)
-function handleVeraResponse(response) {
+// Handle Ivan's response (smart logic)
+function handleIvanResponse(response) {
   // Add assistant response to conversation history
   conversationHistory.push({
     role: 'assistant',
@@ -469,7 +469,7 @@ function addChatMessage(role, content, save = true) {
 
   const label = document.createElement('div');
   label.className = 'chat-label';
-  label.textContent = role === 'user' ? 'You' : 'Vera';
+  label.textContent = role === 'user' ? 'You' : 'Ivan';
 
   const copyBtn = document.createElement('button');
   copyBtn.className = 'copy-btn';
@@ -534,11 +534,11 @@ async function sendChatMessage() {
     content: message
   });
 
-  // Get response from Vera
-  const assistantMessage = await callVera();
+  // Get response from Ivan
+  const assistantMessage = await callIvan();
 
   if (assistantMessage) {
-    handleVeraResponse(assistantMessage);
+    handleIvanResponse(assistantMessage);
   }
 }
 
@@ -632,7 +632,7 @@ async function insertWARMERIntoPage(text) {
   }
 }
 
-// Parse WARMER sections from Vera's response
+// Parse WARMER sections from Ivan's response
 function parseWARMERSections(text) {
   const sections = {
     currentState: '',

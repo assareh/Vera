@@ -1,4 +1,4 @@
-"""Vera - A Flask chatbot with tool calling capabilities."""
+"""Ivan - A Flask chatbot with tool calling capabilities."""
 import os
 import json
 import time
@@ -25,7 +25,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configure tool debug logging
-tools_logger = logging.getLogger("vera.tools")
+tools_logger = logging.getLogger("ivan.tools")
 if config.DEBUG_TOOLS:
     tools_logger.setLevel(logging.DEBUG)
 
@@ -61,7 +61,7 @@ def get_system_prompt() -> str:
     prompt_path = Path(config.SYSTEM_PROMPT_PATH)
 
     if not prompt_path.exists():
-        return "You are Vera, a helpful AI assistant."
+        return "You are Ivan, a helpful AI assistant."
 
     try:
         current_mtime = prompt_path.stat().st_mtime
@@ -77,7 +77,7 @@ def get_system_prompt() -> str:
         return _system_prompt_cache
     except Exception as e:
         print(f"Error reading system prompt: {e}")
-        return "You are Vera, a helpful AI assistant."
+        return "You are Ivan, a helpful AI assistant."
 
 
 def get_backend_endpoint() -> str:
@@ -237,7 +237,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                             "id": f"chatcmpl-{int(time.time())}",
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": config.VERA_MODEL_NAME,
+                            "model": config.IVAN_MODEL_NAME,
                             "choices": [{
                                 "index": 0,
                                 "delta": {"content": token},
@@ -251,7 +251,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                     "id": f"chatcmpl-{int(time.time())}",
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
-                    "model": config.VERA_MODEL_NAME,
+                    "model": config.IVAN_MODEL_NAME,
                     "choices": [{
                         "index": 0,
                         "delta": {},
@@ -300,7 +300,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                             "id": f"chatcmpl-{int(time.time())}",
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": config.VERA_MODEL_NAME,
+                            "model": config.IVAN_MODEL_NAME,
                             "choices": [{
                                 "index": 0,
                                 "delta": {"content": token},
@@ -314,7 +314,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                     "id": f"chatcmpl-{int(time.time())}",
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
-                    "model": config.VERA_MODEL_NAME,
+                    "model": config.IVAN_MODEL_NAME,
                     "choices": [{
                         "index": 0,
                         "delta": {},
@@ -349,7 +349,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
-        "model": config.VERA_MODEL_NAME,
+        "model": config.IVAN_MODEL_NAME,
         "choices": [{
             "index": 0,
             "delta": {"content": "I apologize, but I've reached the maximum number of tool calling iterations."},
@@ -389,7 +389,7 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
                     "id": f"chatcmpl-{int(time.time())}",
                     "object": "chat.completion",
                     "created": int(time.time()),
-                    "model": config.VERA_MODEL_NAME,
+                    "model": config.IVAN_MODEL_NAME,
                     "choices": [{
                         "index": 0,
                         "message": {
@@ -456,7 +456,7 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion",
         "created": int(time.time()),
-        "model": config.VERA_MODEL_NAME,
+        "model": config.IVAN_MODEL_NAME,
         "choices": [{
             "index": 0,
             "message": {
@@ -479,12 +479,12 @@ def list_models():
     return jsonify({
         "object": "list",
         "data": [{
-            "id": config.VERA_MODEL_NAME,
+            "id": config.IVAN_MODEL_NAME,
             "object": "model",
             "created": int(time.time()),
-            "owned_by": "vera",
+            "owned_by": "ivan",
             "permission": [],
-            "root": config.VERA_MODEL_NAME,
+            "root": config.IVAN_MODEL_NAME,
             "parent": None
         }]
     })
@@ -519,7 +519,7 @@ def chat_completions():
 
             # Update model name in response
             if isinstance(result, dict):
-                result["model"] = config.VERA_MODEL_NAME
+                result["model"] = config.IVAN_MODEL_NAME
 
             return jsonify(result)
 
@@ -533,7 +533,7 @@ def health():
     return jsonify({
         "status": "healthy",
         "backend": config.BACKEND_TYPE,
-        "model": config.VERA_MODEL_NAME
+        "model": config.IVAN_MODEL_NAME
     })
 
 
@@ -551,10 +551,10 @@ def start_webui(port: int):
         webui_port = port + 1
         print(f"Starting Open Web UI on port {webui_port}...")
 
-        # Set up environment variables for Open Web UI to auto-discover Vera
+        # Set up environment variables for Open Web UI to auto-discover Ivan
         env = os.environ.copy()
         env["OPENAI_API_BASE_URLS"] = f"http://localhost:{port}/v1"
-        env["OPENAI_API_KEYS"] = "sk-vera"  # Dummy key, not required by Vera
+        env["OPENAI_API_KEYS"] = "sk-ivan"  # Dummy key, not required by Ivan
 
         # Set custom prompt suggestions for SE workflows
         # Note: title must be an array of strings per Open Web UI docs
@@ -585,7 +585,7 @@ def start_webui(port: int):
         )
 
         print(f"Open Web UI started at http://localhost:{webui_port}")
-        print(f"Vera endpoint auto-configured at http://localhost:{port}/v1")
+        print(f"Ivan endpoint auto-configured at http://localhost:{port}/v1")
 
     except Exception as e:
         print(f"Failed to start Open Web UI: {e}")
@@ -593,7 +593,7 @@ def start_webui(port: int):
 
 def signal_handler(sig, frame):
     """Handle shutdown signals."""
-    print("\nShutting down Vera...")
+    print("\nShutting down Ivan...")
     if _webui_process:
         _webui_process.terminate()
         _webui_process.wait()
@@ -601,13 +601,13 @@ def signal_handler(sig, frame):
 
 
 @click.command()
-@click.option("--port", default=config.DEFAULT_PORT, help="Port to run Vera on")
+@click.option("--port", default=config.DEFAULT_PORT, help="Port to run Ivan on")
 @click.option("--backend", type=click.Choice(["ollama", "lmstudio"]), default=config.BACKEND_TYPE, help="Backend to use")
 @click.option("--model", default=config.BACKEND_MODEL, help="Model name to use with backend")
 @click.option("--no-webui", is_flag=True, help="Don't start Open Web UI")
 @click.option("--debug", is_flag=True, help="Run in debug mode")
 def main(port: int, backend: str, model: str, no_webui: bool, debug: bool):
-    """Start Vera chatbot server."""
+    """Start Ivan chatbot server."""
     # Update config
     config.BACKEND_TYPE = backend
     config.BACKEND_MODEL = model
@@ -618,7 +618,7 @@ def main(port: int, backend: str, model: str, no_webui: bool, debug: bool):
 
     print(f"""
 ╭────────────────────────────────────╮
-│  Vera - AI Assistant with Tools   │
+│  Ivan - AI Assistant with Tools   │
 ╰────────────────────────────────────╯
 
 Backend: {backend}

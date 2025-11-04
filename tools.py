@@ -1,4 +1,4 @@
-"""Tool definitions for Vera."""
+"""Tool definitions for Ivan."""
 import re
 import logging
 from datetime import datetime

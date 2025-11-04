@@ -1,4 +1,4 @@
-# Web Search Alternatives for Vera
+# Web Search Alternatives for Ivan
 
 ## Current Situation
 
@@ -163,7 +163,7 @@ Self-hosted meta-search engine that aggregates results from multiple search engi
    - Docker: `docker run -d -p 8080:8080 searxng/searxng`
    - Or deploy to cloud service (Fly.io, Railway, etc.)
 2. Configure to search multiple engines
-3. Point Vera to your SearXNG instance
+3. Point Ivan to your SearXNG instance
 
 **Pros:**
 - No API keys needed
