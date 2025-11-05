@@ -121,6 +121,16 @@ python ivan.py --no-webui
 python ivan.py --port 8080
 ```
 
+**Force rebuild documentation index:**
+```bash
+python ivan.py --rebuild-index
+```
+
+**Force complete re-scrape (re-downloads all pages):**
+```bash
+python ivan.py --force-scrape
+```
+
 ### First Run: Automatic Index Building
 
 **On first use**, Ivan will automatically build a searchable index of HashiCorp documentation when you first query HashiCorp docs. This is a one-time setup process that:
@@ -131,13 +141,17 @@ python ivan.py --port 8080
 - **Caches the index** in `hashicorp_web_docs/` for instant subsequent searches
 
 The index build process:
-- Runs **automatically in the background** on first search query
-- Takes approximately **15-30 minutes** depending on your internet connection
-- Can be monitored with: `tail -f build_index_*.log`
-- Is **cached for 7 days** - after that, Ivan checks for updates automatically
-- Can be manually rebuilt anytime with: `./run_build_index.sh`
+- Runs **automatically when Ivan starts** if needed (first run or after 7 days)
+- Takes approximately **15-30 minutes** on first build (with --force-scrape)
+- Takes approximately **5-10 minutes** for rebuilds (with --rebuild-index, uses cached pages)
+- Shows **detailed progress** in the terminal with real-time ETA and statistics
+- Is **cached for 7 days** - after that, Ivan rebuilds automatically on next startup
 
-**During the initial build**, search queries will return: `"Web documentation search index not initialized. Please wait for initialization."` Simply wait for the build to complete and try again.
+**Manual rebuild options:**
+- `python ivan.py --rebuild-index` - Fast rebuild using cached page HTML (~5-10 min)
+- `python ivan.py --force-scrape` - Complete re-scrape of all pages (~20-30 min)
+
+**Note**: The index must complete building before you can search HashiCorp documentation. All progress is shown in the terminal as Ivan starts.
 
 **Note**: You can use all other Ivan features (customer notes, general chat, etc.) immediately - only HashiCorp documentation search requires the index.
 

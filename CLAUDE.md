@@ -422,11 +422,12 @@ Tools return plain strings. The Flask app converts them to OpenAI-compatible fun
 - Verified working with sentence-transformers 5.1.2 + huggingface-hub 0.36.0
 
 **Web Documentation Index Build Fails or Hangs**
-- Check logs in `build_index_*.log` for specific errors
+- Check logs in terminal output for specific errors
 - Verify internet connection and access to developer.hashicorp.com
 - Check available disk space (index requires ~500MB-1GB)
-- If process is stuck, check with: `./check_build_progress.sh`
-- To rebuild from scratch: `rm -rf hashicorp_web_docs/` then run `./run_build_index.sh`
+- To force complete re-scrape: `python ivan.py --force-scrape`
+- To rebuild with cached pages: `python ivan.py --rebuild-index`
+- To delete everything and start fresh: `rm -rf hashicorp_web_docs/` then run `python ivan.py`
 
 ## Related Documentation
 
@@ -455,9 +456,31 @@ Options:
   --backend [ollama|lmstudio]   Backend to use (default: from config)
   --model TEXT                   Model name for backend (default: from config)
   --no-webui                     Don't start Open Web UI
+  --rebuild-index                Force rebuild of HashiCorp documentation index
+  --force-scrape                 Clear page cache and re-scrape all pages (implies --rebuild-index)
   --debug                        Run in debug mode
   --help                         Show help message
 ```
+
+### Index Rebuild Options
+
+**Normal rebuild** (uses cached HTML pages, fast):
+```bash
+python ivan.py --rebuild-index
+```
+- Re-discovers URLs (finds new pages)
+- Uses cached HTML if available
+- Re-chunks and re-indexes all content
+- ~5-10 minutes
+
+**Force scrape** (re-downloads all pages, slow):
+```bash
+python ivan.py --force-scrape
+```
+- Deletes all cached HTML pages
+- Re-scrapes all ~12,000+ pages from scratch
+- Re-chunks and re-indexes everything
+- ~20-30 minutes
 
 ## Notes for Claude Code
 

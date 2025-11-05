@@ -16,10 +16,13 @@ from flask_cors import CORS
 import requests
 import click
 
+# Disable tokenizers parallelism warning when forking
+# (We load embeddings before Flask potentially forks workers)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import config
 from tools import ALL_TOOLS
 from hashicorp_doc_search import initialize_doc_search
-from web_index_manager import initialize_on_startup as init_web_index_manager
 
 
 app = Flask(__name__)
@@ -637,8 +640,10 @@ def signal_handler(sig, frame):
 @click.option("--backend", type=click.Choice(["ollama", "lmstudio"]), default=config.BACKEND_TYPE, help="Backend to use")
 @click.option("--model", default=config.BACKEND_MODEL, help="Model name to use with backend")
 @click.option("--no-webui", is_flag=True, help="Don't start Open Web UI")
+@click.option("--rebuild-index", is_flag=True, help="Force rebuild of HashiCorp documentation index")
+@click.option("--force-scrape", is_flag=True, help="Clear page cache and re-scrape all pages (implies --rebuild-index)")
 @click.option("--debug", is_flag=True, help="Run in debug mode")
-def main(port: int, backend: str, model: str, no_webui: bool, debug: bool):
+def main(port: int, backend: str, model: str, no_webui: bool, rebuild_index: bool, force_scrape: bool, debug: bool):
     """Start Ivan chatbot server."""
     # Update config
     config.BACKEND_TYPE = backend
@@ -662,9 +667,28 @@ API: http://localhost:{port}/v1
     # Create notes directory if it doesn't exist
     Path(config.NOTES_DIR).mkdir(exist_ok=True)
 
+    # Handle force-scrape flag
+    if force_scrape:
+        pages_dir = Path("./hashicorp_web_docs/pages")
+        if pages_dir.exists():
+            import shutil
+            print("\n🗑️  Clearing page cache for complete re-scrape...")
+            try:
+                shutil.rmtree(pages_dir)
+                print(f"✓ Deleted {pages_dir} - all pages will be re-scraped\n")
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to delete page cache: {e}\n")
+        rebuild_index = True  # Force scrape implies rebuild
+
     # Initialize HashiCorp web documentation search index
-    # This will automatically build/update the index in the background if needed
-    init_web_index_manager(silent=False)
+    # This will automatically build/update the index if needed
+    print("Initializing HashiCorp documentation search...")
+    try:
+        initialize_doc_search(force_update=rebuild_index)
+        print("✓ Documentation search ready\n")
+    except Exception as e:
+        print(f"⚠️  Warning: Failed to initialize documentation search: {e}")
+        print("   Ivan will start without documentation search capability\n")
 
     # Start Web UI if requested
     if not no_webui:

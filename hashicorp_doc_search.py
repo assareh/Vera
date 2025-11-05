@@ -8,15 +8,17 @@ import json
 import logging
 import time
 import xml.etree.ElementTree as ET
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from urllib.robotparser import RobotFileParser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import requests
 from bs4 import BeautifulSoup
+import tiktoken
 
 # LangChain imports
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -56,8 +58,8 @@ class HashiCorpDocSearchIndex:
         cache_dir: str = "./hashicorp_web_docs",
         model_name: str = "all-MiniLM-L6-v2",
         update_check_interval_hours: int = 168,  # 7 days
-        chunk_size: int = 1000,
-        chunk_overlap: int = 200,
+        chunk_size: int = 800,  # Default: tokens for concept/how-to docs
+        chunk_overlap: int = 120,  # Default: ~15% overlap
         max_pages: Optional[int] = None,  # For testing, limit pages crawled
         rate_limit_delay: float = 0.05,  # Delay between requests (seconds)
         max_workers: int = 10  # Parallel workers for fetching
@@ -68,8 +70,8 @@ class HashiCorpDocSearchIndex:
             cache_dir: Directory to cache content and index
             model_name: Sentence transformer model name
             update_check_interval_hours: Hours between update checks (default: 7 days)
-            chunk_size: Characters per chunk
-            chunk_overlap: Overlapping characters between chunks
+            chunk_size: Tokens per chunk (default for concept/how-to docs)
+            chunk_overlap: Overlapping tokens between chunks
             max_pages: Maximum pages to crawl (None = unlimited, for testing)
             rate_limit_delay: Delay between HTTP requests to be respectful
         """
@@ -113,7 +115,15 @@ class HashiCorpDocSearchIndex:
         except Exception as e:
             logger.warning(f"[DOC_SEARCH] Failed to load robots.txt: {e}")
 
-        logger.info(f"[DOC_SEARCH] Initialized with cache_dir={cache_dir}")
+        # Initialize tokenizer for token-based chunking
+        try:
+            self.tokenizer = tiktoken.get_encoding("cl100k_base")  # GPT-4 tokenizer
+            logger.info("[DOC_SEARCH] Initialized tiktoken tokenizer")
+        except Exception as e:
+            logger.warning(f"[DOC_SEARCH] Failed to load tiktoken: {e}")
+            self.tokenizer = None
+
+        logger.info(f"[DOC_SEARCH] Initialized with cache_dir={cache_dir}, chunk_size={chunk_size} tokens")
 
     def _load_metadata(self) -> Dict[str, Any]:
         """Load metadata from cache."""
@@ -137,6 +147,12 @@ class HashiCorpDocSearchIndex:
 
         if "last_update" not in metadata:
             logger.info("[DOC_SEARCH] No previous index found, needs initial build")
+            return True
+
+        # Check version - force rebuild if chunking strategy changed
+        current_version = "3.0.0-token-adaptive"  # Token-based adaptive chunking by doc type
+        if metadata.get("version") != current_version:
+            logger.info(f"[DOC_SEARCH] Index version changed (old: {metadata.get('version', 'unknown')}, new: {current_version}), needs rebuild")
             return True
 
         last_update = datetime.fromisoformat(metadata["last_update"])
@@ -185,6 +201,8 @@ class HashiCorpDocSearchIndex:
 
                 if loc is not None:
                     url = loc.text
+                    # Normalize URL (remove anchors if present)
+                    url = self._normalize_url(url)
                     parsed = urlparse(url)
                     path_parts = parsed.path.strip('/').split('/')
 
@@ -219,7 +237,9 @@ class HashiCorpDocSearchIndex:
         base_url = "https://developer.hashicorp.com"
 
         try:
-            logger.info("[DOC_SEARCH] Discovering validated-designs pages...")
+            logger.info("[DOC_SEARCH] " + "=" * 70)
+            logger.info("[DOC_SEARCH] PHASE: Discovering validated-designs pages")
+            logger.info("[DOC_SEARCH] " + "=" * 70)
             logger.debug(f"[DOC_SEARCH] Fetching {base_url}/validated-designs")
 
             # Fetch the index page
@@ -236,10 +256,24 @@ class HashiCorpDocSearchIndex:
             guide_links = set()
             for link in soup.find_all('a', href=True):
                 href = link['href']
+
+                # Skip external links and non-http(s) links
+                if href.startswith('http') and not href.startswith(base_url):
+                    continue
+                if href.startswith(('mailto:', 'tel:', '#')):
+                    continue
+
+                # Make absolute URL first
+                if href.startswith('/'):
+                    href = base_url + href
+                elif not href.startswith('http'):
+                    # Relative URL
+                    href = urljoin(f"{base_url}/validated-designs", href)
+
+                # NOW check if it's a validated-designs URL
                 if '/validated-designs/' in href:
-                    # Make absolute URL
-                    if href.startswith('/'):
-                        href = base_url + href
+                    # Normalize URL (remove anchors)
+                    href = self._normalize_url(href)
                     guide_links.add(href)
 
             logger.info(f"[DOC_SEARCH] Found {len(guide_links)} validated-designs guide links")
@@ -249,9 +283,11 @@ class HashiCorpDocSearchIndex:
                 return []
 
             # For each guide, crawl to find all pages
+            logger.info(f"[DOC_SEARCH] Crawling {len(guide_links)} guide pages for subpage links...")
             for idx, guide_url in enumerate(guide_links, 1):
                 try:
-                    logger.debug(f"[DOC_SEARCH] Crawling guide {idx}/{len(guide_links)}: {guide_url}")
+                    progress_pct = (idx / len(guide_links)) * 100
+                    logger.info(f"[DOC_SEARCH] [{progress_pct:5.1f}%] Crawling guide {idx}/{len(guide_links)}: {guide_url}")
                     time.sleep(self.rate_limit_delay)
 
                     response = requests.get(guide_url, headers=headers, timeout=30)
@@ -264,10 +300,24 @@ class HashiCorpDocSearchIndex:
                     links_found = 0
                     for link in soup.find_all('a', href=True):
                         href = link['href']
+
+                        # Skip external links and non-http(s) links
+                        if href.startswith('http') and not href.startswith(base_url):
+                            continue
+                        if href.startswith(('mailto:', 'tel:', '#')):
+                            continue
+
+                        # Make absolute URL first
+                        if href.startswith('/'):
+                            href = base_url + href
+                        elif not href.startswith('http'):
+                            # Relative URL - resolve relative to guide_url
+                            href = urljoin(guide_url, href)
+
+                        # NOW check if it's a validated-designs URL
                         if '/validated-designs/' in href:
-                            # Make absolute URL
-                            if href.startswith('/'):
-                                href = base_url + href
+                            # Normalize URL (remove anchors)
+                            href = self._normalize_url(href)
 
                             # Extract product from URL
                             path_parts = href.replace(base_url, '').strip('/').split('/')
@@ -300,6 +350,68 @@ class HashiCorpDocSearchIndex:
             logger.error(traceback.format_exc())
             return []
 
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL by removing anchors/fragments.
+
+        Args:
+            url: URL to normalize
+
+        Returns:
+            URL without anchor fragment
+        """
+        # Split URL and remove fragment (anchor)
+        parsed = urlparse(url)
+        # Reconstruct without fragment
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+    def _count_tokens(self, text: str) -> int:
+        """Count tokens in text using tiktoken.
+
+        Args:
+            text: Text to count tokens for
+
+        Returns:
+            Number of tokens
+        """
+        if self.tokenizer is None:
+            # Fallback: rough estimate (1 token ≈ 4 chars)
+            return len(text) // 4
+
+        try:
+            return len(self.tokenizer.encode(text))
+        except Exception as e:
+            logger.warning(f"[DOC_SEARCH] Token counting failed: {e}, using estimate")
+            return len(text) // 4
+
+    def _get_chunk_config(self, url: str) -> Dict[str, int]:
+        """Get adaptive chunk configuration based on document type.
+
+        Args:
+            url: Page URL to determine type
+
+        Returns:
+            Dictionary with 'size' (tokens) and 'overlap' (tokens)
+        """
+        # API reference and CLI command pages - smaller chunks
+        if '/api/' in url or '/api-docs/' in url or '/commands/' in url:
+            return {'size': 500, 'overlap': 75}  # ~15% overlap
+
+        # Configuration-heavy pages - medium chunks with more overlap
+        elif '/configuration/' in url or re.search(r'/docs/.*config', url):
+            return {'size': 400, 'overlap': 80}  # ~20% overlap
+
+        # Release notes and changelogs - medium chunks
+        elif '/release-notes' in url or '/changelog' in url or '/releases/' in url:
+            return {'size': 600, 'overlap': 60}  # ~10% overlap
+
+        # Tutorials and guides - larger chunks
+        elif '/tutorials/' in url or '/guides/' in url:
+            return {'size': 900, 'overlap': 135}  # ~15% overlap
+
+        # Concept/how-to documentation (default) - standard chunks
+        else:
+            return {'size': 800, 'overlap': 120}  # ~15% overlap
+
     def _can_fetch(self, url: str) -> bool:
         """Check if URL can be fetched according to robots.txt.
 
@@ -321,17 +433,17 @@ class HashiCorpDocSearchIndex:
             # If robots.txt parsing fails, be conservative and allow
             return True
 
-    def _extract_main_content(self, html: str, url: str) -> Optional[str]:
-        """Extract main documentation content from HTML page.
+    def _extract_main_content(self, html: str, url: str) -> Optional[Dict[str, Any]]:
+        """Extract main documentation content from HTML page with section anchors.
 
-        Preserves structure including headings and code blocks for better context.
+        Preserves structure including headings, anchors, and code blocks for better context.
 
         Args:
             html: Raw HTML content
             url: URL of the page (for logging)
 
         Returns:
-            Extracted text content or None
+            Dictionary with 'content' (text) and 'sections' (list of section info) or None
         """
         try:
             soup = BeautifulSoup(html, 'html.parser')
@@ -351,29 +463,82 @@ class HashiCorpDocSearchIndex:
             )
 
             if main_content:
-                # Process content to preserve structure
+                # Track sections (H2/H3 with anchors)
+                sections = []
                 text_parts = []
+                current_section = None
+                current_h2_anchor = None
+
+                # Process content and extract section anchors
+                processed_elements = set()  # Track processed elements to avoid duplicates
 
                 for element in main_content.descendants:
+                    # Skip if already processed (avoid duplicating nested content)
+                    if id(element) in processed_elements:
+                        continue
+
                     if element.name == 'h1':
-                        text_parts.append(f"\n# {element.get_text(strip=True)}\n")
+                        heading_text = element.get_text(strip=True)
+                        anchor_id = element.get('id', '')
+                        text_parts.append(f"\n# {heading_text}\n")
+                        if anchor_id:
+                            sections.append({
+                                'level': 1,
+                                'text': heading_text,
+                                'anchor': anchor_id,
+                                'position': len(''.join(text_parts))
+                            })
+                        processed_elements.add(id(element))
+
                     elif element.name == 'h2':
-                        text_parts.append(f"\n## {element.get_text(strip=True)}\n")
+                        heading_text = element.get_text(strip=True)
+                        anchor_id = element.get('id', '')
+                        text_parts.append(f"\n## {heading_text}\n")
+                        current_h2_anchor = anchor_id  # Track for H3s
+                        if anchor_id:
+                            current_section = {
+                                'level': 2,
+                                'text': heading_text,
+                                'anchor': anchor_id,
+                                'position': len(''.join(text_parts))
+                            }
+                            sections.append(current_section)
+                        processed_elements.add(id(element))
+
                     elif element.name == 'h3':
-                        text_parts.append(f"\n### {element.get_text(strip=True)}\n")
-                    elif element.name in ['pre', 'code']:
-                        # Preserve code blocks
+                        heading_text = element.get_text(strip=True)
+                        anchor_id = element.get('id', '')
+                        text_parts.append(f"\n### {heading_text}\n")
+                        # Use H3 anchor if available, otherwise fall back to parent H2
+                        section_anchor = anchor_id if anchor_id else current_h2_anchor
+                        if section_anchor:
+                            sections.append({
+                                'level': 3,
+                                'text': heading_text,
+                                'anchor': section_anchor,
+                                'position': len(''.join(text_parts)),
+                                'parent_anchor': current_h2_anchor if anchor_id else None
+                            })
+                        processed_elements.add(id(element))
+
+                    elif element.name in ['pre', 'code'] and element.parent.name != 'pre':
+                        # Preserve code blocks (avoid duplicating code inside pre)
                         code_text = element.get_text(strip=False)
                         if code_text.strip():
                             text_parts.append(f"\n```\n{code_text}\n```\n")
-                    elif element.name == 'p':
+                        processed_elements.add(id(element))
+
+                    elif element.name == 'p' and not any(p.name in ['pre', 'code'] for p in element.parents):
                         para_text = element.get_text(strip=True)
                         if para_text:
                             text_parts.append(f"{para_text}\n")
-                    elif element.name in ['li']:
+                        processed_elements.add(id(element))
+
+                    elif element.name == 'li' and element.parent.name in ['ul', 'ol']:
                         li_text = element.get_text(strip=True)
                         if li_text:
                             text_parts.append(f"- {li_text}\n")
+                        processed_elements.add(id(element))
 
                 # Join and clean up excessive whitespace
                 text = ''.join(text_parts)
@@ -381,7 +546,10 @@ class HashiCorpDocSearchIndex:
                 import re
                 text = re.sub(r'\n{3,}', '\n\n', text)
 
-                return text.strip()
+                return {
+                    'content': text.strip(),
+                    'sections': sections
+                }
 
             return None
 
@@ -396,7 +564,7 @@ class HashiCorpDocSearchIndex:
             url_info: Dictionary with 'url', 'product', and 'lastmod'
 
         Returns:
-            Dictionary with extracted content and metadata or None
+            Dictionary with extracted content, sections, and metadata or None
         """
         url = url_info["url"]
 
@@ -411,10 +579,10 @@ class HashiCorpDocSearchIndex:
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
 
-            # Extract main content
-            content = self._extract_main_content(response.text, url)
+            # Extract main content with sections
+            extracted = self._extract_main_content(response.text, url)
 
-            if not content:
+            if not extracted:
                 logger.warning(f"[DOC_SEARCH] No content extracted from {url}")
                 return None
 
@@ -422,8 +590,9 @@ class HashiCorpDocSearchIndex:
                 "url": url,
                 "product": url_info["product"],
                 "lastmod": url_info["lastmod"],
-                "content": content,
-                "length": len(content)
+                "content": extracted["content"],
+                "sections": extracted["sections"],
+                "length": len(extracted["content"])
             }
 
         except Exception as e:
@@ -557,20 +726,233 @@ class HashiCorpDocSearchIndex:
 
         return page_data
 
-    def _create_documents(self, url_list: List[Dict[str, str]]) -> List[Document]:
-        """Create LangChain Document objects from web pages using parallel fetching.
+    def _split_into_sections(self, page_data: Dict[str, Any]) -> List[Document]:
+        """Split page content into section-aware chunks using token-based sizing.
+
+        Chunks by H2/H3 boundaries with adaptive sizing based on doc type.
+        Preserves section anchors and heading context.
+
+        Args:
+            page_data: Page data with content, sections, and metadata
+
+        Returns:
+            List of Document chunks with section metadata
+        """
+        content = page_data["content"]
+        sections = page_data.get("sections", [])
+        url = page_data["url"]
+        product = page_data["product"]
+
+        # Get adaptive chunk configuration for this doc type
+        chunk_config = self._get_chunk_config(url)
+        chunk_size_tokens = chunk_config['size']
+        overlap_tokens = chunk_config['overlap']
+
+        if not sections:
+            # Fallback to token-based splitting if no sections found
+            logger.debug(f"[DOC_SEARCH] No sections found for {url}, using token-based split")
+            # Split by tokens using text splitter
+            if self.text_splitter is None:
+                self._initialize_components()
+
+            # Temporarily update text splitter with adaptive config
+            from langchain_text_splitters import TokenTextSplitter
+            token_splitter = TokenTextSplitter(
+                chunk_size=chunk_size_tokens,
+                chunk_overlap=overlap_tokens
+            )
+            split_docs = token_splitter.split_text(content)
+
+            return [Document(
+                page_content=chunk,
+                metadata={
+                    "url": url,
+                    "product": product,
+                    "source": "web",
+                    "lastmod": page_data.get("lastmod")
+                }
+            ) for chunk in split_docs]
+
+        chunks = []
+
+        # Group sections by H2 (major sections)
+        h2_sections = [s for s in sections if s['level'] == 2]
+
+        for i, section in enumerate(h2_sections):
+            start_pos = section['position']
+
+            # Find the end position (start of next H2 or end of content)
+            if i + 1 < len(h2_sections):
+                end_pos = h2_sections[i + 1]['position']
+            else:
+                end_pos = len(content)
+
+            # Extract section content
+            section_content = content[start_pos:end_pos].strip()
+            section_heading = section['text']
+            section_anchor = section['anchor']
+
+            # Check token count instead of character count
+            section_tokens = self._count_tokens(section_content)
+
+            # If section is too large, split it by H3 subsections
+            if section_tokens > chunk_size_tokens:
+                # Find H3s within this H2 section
+                h3_in_section = [
+                    s for s in sections
+                    if s['level'] == 3
+                    and s['position'] >= start_pos
+                    and s['position'] < end_pos
+                ]
+
+                if h3_in_section:
+                    # Split by H3 boundaries
+                    for j, h3 in enumerate(h3_in_section):
+                        h3_start = h3['position']
+
+                        # Find end of H3 section
+                        if j + 1 < len(h3_in_section):
+                            h3_end = h3_in_section[j + 1]['position']
+                        else:
+                            h3_end = end_pos
+
+                        h3_content = content[h3_start:h3_end].strip()
+
+                        # Include parent H2 heading as context
+                        chunk_text = f"## {section_heading}\n\n{h3_content}"
+                        chunk_tokens = self._count_tokens(chunk_text)
+
+                        # If still too large, use token-based splitting with overlap
+                        if chunk_tokens > chunk_size_tokens * 2:
+                            # Split into smaller chunks
+                            sub_chunks = self._split_large_section(
+                                chunk_text,
+                                section_heading,
+                                h3['anchor'],
+                                chunk_size_tokens,
+                                overlap_tokens
+                            )
+                            for sub_chunk in sub_chunks:
+                                chunks.append(Document(
+                                    page_content=sub_chunk,
+                                    metadata={
+                                        "url": url,
+                                        "product": product,
+                                        "source": "web",
+                                        "lastmod": page_data.get("lastmod"),
+                                        "section_anchor": h3['anchor'],
+                                        "section_heading": f"{section_heading} > {h3['text']}"
+                                    }
+                                ))
+                        else:
+                            chunks.append(Document(
+                                page_content=chunk_text,
+                                metadata={
+                                    "url": url,
+                                    "product": product,
+                                    "source": "web",
+                                    "lastmod": page_data.get("lastmod"),
+                                    "section_anchor": h3['anchor'],
+                                    "section_heading": f"{section_heading} > {h3['text']}"
+                                }
+                            ))
+                else:
+                    # No H3s, split the large H2 section by tokens
+                    sub_chunks = self._split_large_section(
+                        section_content,
+                        section_heading,
+                        section_anchor,
+                        chunk_size_tokens,
+                        overlap_tokens
+                    )
+                    for sub_chunk in sub_chunks:
+                        chunks.append(Document(
+                            page_content=sub_chunk,
+                            metadata={
+                                "url": url,
+                                "product": product,
+                                "source": "web",
+                                "lastmod": page_data.get("lastmod"),
+                                "section_anchor": section_anchor,
+                                "section_heading": section_heading
+                            }
+                        ))
+            else:
+                # Section is small enough, keep as single chunk
+                chunks.append(Document(
+                    page_content=section_content,
+                    metadata={
+                        "url": url,
+                        "product": product,
+                        "source": "web",
+                        "lastmod": page_data.get("lastmod"),
+                        "section_anchor": section_anchor,
+                        "section_heading": section_heading
+                    }
+                ))
+
+        return chunks
+
+    def _split_large_section(
+        self,
+        content: str,
+        heading: str,
+        anchor: str,
+        chunk_size_tokens: int,
+        overlap_tokens: int
+    ) -> List[str]:
+        """Split a large section into smaller token-based chunks with overlap.
+
+        Args:
+            content: Section content to split
+            heading: Section heading for context
+            anchor: Section anchor ID
+            chunk_size_tokens: Maximum tokens per chunk
+            overlap_tokens: Overlap tokens between chunks
+
+        Returns:
+            List of chunk strings
+        """
+        chunks = []
+
+        # Use TokenTextSplitter for token-based splitting
+        from langchain_text_splitters import TokenTextSplitter
+        token_splitter = TokenTextSplitter(
+            chunk_size=chunk_size_tokens,
+            chunk_overlap=overlap_tokens
+        )
+
+        # Split the content
+        split_docs = token_splitter.split_text(content)
+
+        # Add heading context to each chunk
+        for chunk_text in split_docs:
+            # Only add heading if not already present
+            if not chunk_text.strip().startswith(f"## {heading}"):
+                chunk_with_context = f"## {heading}\n\n{chunk_text}"
+            else:
+                chunk_with_context = chunk_text
+            chunks.append(chunk_with_context)
+
+        return chunks
+
+    def _fetch_pages(self, url_list: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """Fetch page content from URLs using parallel fetching.
 
         Args:
             url_list: List of URL info dicts from sitemap
 
         Returns:
-            List of LangChain Documents
+            List of page data dicts with content and sections
         """
-        documents = []
+        pages = []
         total = len(url_list)
+        start_time = time.time()
 
-        logger.info(f"[DOC_SEARCH] Fetching content from {total} pages with {self.max_workers} parallel workers...")
-        logger.info(f"[DOC_SEARCH] Progress will be logged every 100 pages...")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info(f"[DOC_SEARCH] PHASE 2/4: Fetching {total:,} pages")
+        logger.info(f"[DOC_SEARCH] Workers: {self.max_workers} parallel threads")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
 
         # Use ThreadPoolExecutor for parallel fetching
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -582,30 +964,92 @@ class HashiCorpDocSearchIndex:
 
             # Process completed tasks
             completed = 0
+            failed = 0
+            last_log_time = start_time
+
             for future in as_completed(future_to_url):
                 completed += 1
-                if completed % 100 == 0:
-                    logger.info(f"[DOC_SEARCH] Progress: {completed}/{total} pages ({100*completed/total:.1f}%)")
+                current_time = time.time()
+
+                # Log progress every 50 pages or every 5 seconds
+                if completed % 50 == 0 or (current_time - last_log_time) >= 5:
+                    elapsed = current_time - start_time
+                    rate = completed / elapsed if elapsed > 0 else 0
+                    eta_seconds = (total - completed) / rate if rate > 0 else 0
+                    eta_mins = eta_seconds / 60
+
+                    progress_pct = (completed / total) * 100
+                    logger.info(
+                        f"[DOC_SEARCH] [{progress_pct:5.1f}%] {completed}/{total} pages | "
+                        f"Rate: {rate:.1f} pages/sec | ETA: {eta_mins:.1f} min"
+                    )
+                    last_log_time = current_time
 
                 try:
                     page_data = future.result()
                     if page_data:
-                        doc = Document(
-                            page_content=page_data["content"],
-                            metadata={
-                                "url": page_data["url"],
-                                "product": page_data["product"],
-                                "source": "web",
-                                "lastmod": page_data.get("lastmod")
-                            }
-                        )
-                        documents.append(doc)
+                        pages.append(page_data)
+                    else:
+                        failed += 1
                 except Exception as e:
+                    failed += 1
                     url_info = future_to_url[future]
                     logger.warning(f"[DOC_SEARCH] Failed to process {url_info['url']}: {e}")
 
-        logger.info(f"[DOC_SEARCH] Created {len(documents)} documents from {completed} pages")
-        return documents
+        elapsed = time.time() - start_time
+        logger.info("[DOC_SEARCH] " + "-" * 70)
+        logger.info(f"[DOC_SEARCH] ✓ Fetched {len(pages)} pages successfully ({failed} failed) in {elapsed:.1f}s")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        return pages
+
+    def _create_chunks(self, pages: List[Dict[str, Any]]) -> List[Document]:
+        """Create section-aware chunks from fetched pages.
+
+        Args:
+            pages: List of page data dicts with content and sections
+
+        Returns:
+            List of LangChain Document chunks
+        """
+        all_chunks = []
+        total = len(pages)
+        start_time = time.time()
+
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info(f"[DOC_SEARCH] PHASE 3/4: Creating section-aware chunks from {total:,} pages")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+
+        last_log_time = start_time
+        for idx, page_data in enumerate(pages, 1):
+            current_time = time.time()
+
+            # Log progress every 50 pages or every 5 seconds
+            if idx % 50 == 0 or (current_time - last_log_time) >= 5:
+                elapsed = current_time - start_time
+                rate = idx / elapsed if elapsed > 0 else 0
+                eta_seconds = (total - idx) / rate if rate > 0 else 0
+                eta_mins = eta_seconds / 60
+
+                progress_pct = (idx / total) * 100
+                logger.info(
+                    f"[DOC_SEARCH] [{progress_pct:5.1f}%] {idx}/{total} pages | "
+                    f"Chunks: {len(all_chunks)} | Rate: {rate:.1f} pages/sec | ETA: {eta_mins:.1f} min"
+                )
+                last_log_time = current_time
+
+            try:
+                page_chunks = self._split_into_sections(page_data)
+                all_chunks.extend(page_chunks)
+            except Exception as e:
+                logger.warning(f"[DOC_SEARCH] Failed to chunk page {page_data.get('url', 'unknown')}: {e}")
+
+        elapsed = time.time() - start_time
+        avg_chunks_per_page = len(all_chunks) / total if total > 0 else 0
+        logger.info("[DOC_SEARCH] " + "-" * 70)
+        logger.info(f"[DOC_SEARCH] ✓ Created {len(all_chunks)} section-aware chunks from {total} pages in {elapsed:.1f}s")
+        logger.info(f"[DOC_SEARCH] Average: {avg_chunks_per_page:.1f} chunks per page")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        return all_chunks
 
     def _initialize_components(self):
         """Initialize LangChain components."""
@@ -641,18 +1085,18 @@ class HashiCorpDocSearchIndex:
         chunks = self._load_chunks()
 
         if chunks is None:
-            # Create documents
-            logger.info("[DOC_SEARCH] No cached chunks found, creating from documents...")
-            documents = self._create_documents(url_list)
+            # Fetch pages
+            logger.info("[DOC_SEARCH] No cached chunks found, fetching pages...")
+            pages = self._fetch_pages(url_list)
 
-            if not documents:
-                logger.error("[DOC_SEARCH] No documents to index!")
+            if not pages:
+                logger.error("[DOC_SEARCH] No pages fetched!")
                 return
 
-            # Split documents into chunks
-            logger.info("[DOC_SEARCH] Splitting documents into chunks...")
-            chunks = self.text_splitter.split_documents(documents)
-            logger.info(f"[DOC_SEARCH] Created {len(chunks)} chunks")
+            # Create section-aware chunks
+            logger.info("[DOC_SEARCH] Creating section-aware chunks...")
+            chunks = self._create_chunks(pages)
+            logger.info(f"[DOC_SEARCH] Created {len(chunks)} section-aware chunks")
 
             # Save chunks to disk
             self._save_chunks(chunks)
@@ -660,20 +1104,27 @@ class HashiCorpDocSearchIndex:
             logger.info(f"[DOC_SEARCH] Using {len(chunks)} cached chunks")
 
         # Create FAISS index with batching for progress tracking
-        logger.info("[DOC_SEARCH] Creating FAISS vector store (this may take a while)...")
-        logger.info(f"[DOC_SEARCH] Generating embeddings for {len(chunks)} chunks...")
-        logger.info("[DOC_SEARCH] Building index in batches to allow resumption...")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info(f"[DOC_SEARCH] PHASE 4/4: Generating embeddings for {len(chunks):,} chunks")
+        logger.info("[DOC_SEARCH] This is usually the slowest phase (5-15 minutes)")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
 
         # Build index in batches
         batch_size = 10000  # Process 10k chunks at a time
         total_batches = (len(chunks) + batch_size - 1) // batch_size
+        embedding_start_time = time.time()
 
         for batch_idx in range(total_batches):
+            batch_start_time = time.time()
             start_idx = batch_idx * batch_size
             end_idx = min((batch_idx + 1) * batch_size, len(chunks))
             batch_chunks = chunks[start_idx:end_idx]
 
-            logger.info(f"[DOC_SEARCH] Processing batch {batch_idx + 1}/{total_batches} ({start_idx}-{end_idx}, {len(batch_chunks)} chunks)...")
+            progress_pct = (start_idx / len(chunks)) * 100
+            logger.info(
+                f"[DOC_SEARCH] [{progress_pct:5.1f}%] Batch {batch_idx + 1}/{total_batches} | "
+                f"Processing chunks {start_idx:,}-{end_idx:,} ({len(batch_chunks):,} chunks)"
+            )
 
             if batch_idx == 0:
                 # Create initial index
@@ -684,14 +1135,27 @@ class HashiCorpDocSearchIndex:
                 self.vectorstore.merge_from(batch_vectorstore)
 
             # Save progress after each batch
-            logger.info(f"[DOC_SEARCH] Saving progress after batch {batch_idx + 1}...")
             self.vectorstore.save_local(str(self.index_dir))
             self._save_embedding_progress(end_idx, len(chunks))
 
-            logger.info(f"[DOC_SEARCH] ✓ Batch {batch_idx + 1}/{total_batches} complete ({end_idx}/{len(chunks)} chunks)")
+            # Calculate timing stats
+            batch_elapsed = time.time() - batch_start_time
+            total_elapsed = time.time() - embedding_start_time
+            avg_batch_time = total_elapsed / (batch_idx + 1)
+            remaining_batches = total_batches - (batch_idx + 1)
+            eta_seconds = remaining_batches * avg_batch_time
+            eta_mins = eta_seconds / 60
 
-        logger.info(f"[DOC_SEARCH] ✓ Index built successfully!")
-        logger.info(f"[DOC_SEARCH] ✓ {len(chunks)} chunks indexed")
+            logger.info(
+                f"[DOC_SEARCH] ✓ Batch complete in {batch_elapsed:.1f}s | "
+                f"Total: {end_idx:,}/{len(chunks):,} chunks | ETA: {eta_mins:.1f} min"
+            )
+
+        embedding_elapsed = time.time() - embedding_start_time
+        logger.info("[DOC_SEARCH] " + "-" * 70)
+        logger.info(f"[DOC_SEARCH] ✓ All embeddings generated in {embedding_elapsed:.1f}s ({embedding_elapsed/60:.1f} min)")
+        logger.info(f"[DOC_SEARCH] ✓ {len(chunks):,} chunks indexed successfully")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
 
     def _load_index(self) -> bool:
         """Load FAISS index from disk and create hybrid retriever."""
@@ -748,7 +1212,11 @@ class HashiCorpDocSearchIndex:
         Args:
             force_update: Force rebuild even if cache is fresh
         """
-        logger.info("[DOC_SEARCH] Initializing search index")
+        init_start_time = time.time()
+        logger.info("")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info("[DOC_SEARCH] HASHICORP DOCUMENTATION SEARCH - INDEX INITIALIZATION")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
 
         # Check if we need to update
         if not force_update and not self._needs_update():
@@ -762,66 +1230,78 @@ class HashiCorpDocSearchIndex:
         url_list = self._load_url_list()
 
         if url_list is None or force_update:
+            logger.info("[DOC_SEARCH] " + "=" * 70)
+            logger.info("[DOC_SEARCH] PHASE 1/4: Discovering URLs")
+            logger.info("[DOC_SEARCH] " + "=" * 70)
+
             # Download sitemap
-            logger.info("[DOC_SEARCH] Step 1: Downloading sitemap...")
+            logger.info("[DOC_SEARCH] Downloading sitemap...")
             if not self._download_sitemap():
                 logger.error("[DOC_SEARCH] Failed to download sitemap")
                 return
 
             # Parse sitemap
-            logger.info("[DOC_SEARCH] Step 2: Parsing sitemap...")
+            logger.info("[DOC_SEARCH] Parsing sitemap...")
             url_list = self._parse_sitemap()
             if not url_list:
                 logger.error("[DOC_SEARCH] No URLs found in sitemap")
                 return
-            logger.info(f"[DOC_SEARCH] Found {len(url_list)} URLs in sitemap")
+            logger.info(f"[DOC_SEARCH] ✓ Found {len(url_list):,} URLs in sitemap")
 
             # Discover validated-designs pages (not in sitemap)
-            logger.info("[DOC_SEARCH] Step 3: Discovering validated-designs pages...")
             validated_designs = self._discover_validated_designs()
             if validated_designs:
-                logger.info(f"[DOC_SEARCH] Adding {len(validated_designs)} validated-designs pages")
+                logger.info(f"[DOC_SEARCH] ✓ Adding {len(validated_designs):,} validated-designs pages")
                 # Merge with sitemap, deduplicating by URL
                 all_urls = {url_info["url"]: url_info for url_info in url_list}
                 for url_info in validated_designs:
                     all_urls[url_info["url"]] = url_info
                 url_list = list(all_urls.values())
-                logger.info(f"[DOC_SEARCH] Total URLs after merging: {len(url_list)}")
+                logger.info(f"[DOC_SEARCH] ✓ Total: {len(url_list):,} unique URLs")
 
             # Save URL list for resume capability
             self._save_url_list(url_list)
+            logger.info("[DOC_SEARCH] " + "=" * 70)
         else:
-            logger.info(f"[DOC_SEARCH] ✓ Resuming with {len(url_list)} URLs from cache")
+            logger.info(f"[DOC_SEARCH] ✓ Resuming with {len(url_list):,} URLs from cache")
 
         # Check if we have cached chunks (scraping already done)
         chunks = self._load_chunks()
         if chunks:
-            logger.info(f"[DOC_SEARCH] ✓ Found {len(chunks)} cached chunks (scraping complete)")
-            logger.info("[DOC_SEARCH] Skipping to embedding generation...")
+            logger.info(f"[DOC_SEARCH] ✓ Found {len(chunks):,} cached chunks (Phases 2-3 already complete)")
 
         # Check embedding progress
         progress = self._load_embedding_progress()
         if progress:
-            logger.info(f"[DOC_SEARCH] ✓ Previous embedding progress: {progress['completed']}/{progress['total']} chunks")
+            logger.info(f"[DOC_SEARCH] ✓ Previous embedding progress: {progress['completed']:,}/{progress['total']:,} chunks")
             logger.info(f"[DOC_SEARCH] Last saved: {progress['timestamp']}")
 
         # Build index (will resume from cache if available)
-        logger.info("[DOC_SEARCH] Step 4: Building FAISS index...")
         if not chunks:
-            logger.info(f"[DOC_SEARCH] This will fetch {len(url_list)} pages and create embeddings...")
+            logger.info(f"[DOC_SEARCH] Building index from {len(url_list):,} URLs (Phases 2-4)...")
         self._build_index(url_list)
 
         # Update metadata
         metadata = {
+            "version": "3.0.0-token-adaptive",
             "last_update": datetime.now().isoformat(),
             "page_count": len(url_list),
             "model_name": self.model_name,
-            "chunk_size": self.chunk_size,
-            "chunk_overlap": self.chunk_overlap
+            "chunk_size_tokens": self.chunk_size,  # Now tokens, not chars
+            "chunk_overlap_tokens": self.chunk_overlap
         }
         self._save_metadata(metadata)
 
-        logger.info("[DOC_SEARCH] Initialization complete")
+        # Final summary
+        init_elapsed = time.time() - init_start_time
+        logger.info("")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info("[DOC_SEARCH] ✅ INDEX INITIALIZATION COMPLETE")
+        logger.info(f"[DOC_SEARCH] Total time: {init_elapsed:.1f}s ({init_elapsed/60:.1f} minutes)")
+        logger.info(f"[DOC_SEARCH] Pages indexed: {len(url_list):,}")
+        logger.info(f"[DOC_SEARCH] Model: {self.model_name}")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info("")
 
     def search(
         self,
@@ -876,9 +1356,13 @@ class HashiCorpDocSearchIndex:
                 # Exponential decay: 1.0, 0.91, 0.83, 0.75, 0.68...
                 rank_score = 1.0 / (1.0 + idx * 0.1)
 
+                # Build URL with anchor if available
+                base_url = doc.metadata.get("url", "")
+                section_anchor = doc.metadata.get("section_anchor", "")
+                url = f"{base_url}#{section_anchor}" if section_anchor else base_url
+
                 # Boost validated-designs URLs (authoritative content)
-                url = doc.metadata.get("url", "")
-                if "validated-designs" in url:
+                if "validated-designs" in base_url:
                     # Modest boost for authoritative docs (1.15x = 15% boost)
                     rank_score = rank_score * 1.15
 
@@ -891,23 +1375,30 @@ class HashiCorpDocSearchIndex:
                     "product": doc.metadata.get("product", "unknown"),
                     "source": doc.metadata.get("source", "web"),
                     "score": float(rank_score),
-                    "distance": 0.0  # Not applicable for hybrid
+                    "distance": 0.0,  # Not applicable for hybrid
+                    "section_heading": doc.metadata.get("section_heading", "")
                 })
 
             # Re-sort by boosted scores (validated-designs should rank slightly higher)
             results.sort(key=lambda x: x["score"], reverse=True)
 
-            # Deduplicate by URL (keep highest-scoring chunk per URL)
-            seen_urls = set()
+            # Deduplicate by base URL (keep highest-scoring chunk per page, but multiple sections per page allowed)
+            # We keep top 2 sections per page to provide context
+            url_counts = {}
             deduplicated_results = []
             for r in results:
-                url = r["url"]
-                if url not in seen_urls:
-                    seen_urls.add(url)
+                # Extract base URL (without anchor)
+                base_url = r["url"].split('#')[0]
+                count = url_counts.get(base_url, 0)
+
+                # Keep top 2 sections per page
+                if count < 2:
+                    url_counts[base_url] = count + 1
                     deduplicated_results.append(r)
+
             results = deduplicated_results
 
-            logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} unique URLs")
+            logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} results (max 2 sections per page)")
 
             # Limit to top_k after boosting and re-ranking
             results = results[:top_k]
@@ -940,26 +1431,38 @@ class HashiCorpDocSearchIndex:
                 # Convert L2 distance to similarity score
                 similarity = 1.0 / (1.0 + score)
 
+                # Build URL with anchor if available
+                base_url = doc.metadata.get("url", "")
+                section_anchor = doc.metadata.get("section_anchor", "")
+                url = f"{base_url}#{section_anchor}" if section_anchor else base_url
+
                 results.append({
                     "text": doc.page_content,
-                    "url": doc.metadata.get("url", ""),
+                    "url": url,
                     "product": doc.metadata.get("product", "unknown"),
                     "source": doc.metadata.get("source", "web"),
                     "score": float(similarity),
-                    "distance": float(score)
+                    "distance": float(score),
+                    "section_heading": doc.metadata.get("section_heading", "")
                 })
 
-            # Deduplicate by URL (keep highest-scoring chunk per URL)
-            seen_urls = set()
+            # Deduplicate by base URL (keep highest-scoring chunk per page, but multiple sections per page allowed)
+            # We keep top 2 sections per page to provide context
+            url_counts = {}
             deduplicated_results = []
             for r in results:
-                url = r["url"]
-                if url not in seen_urls:
-                    seen_urls.add(url)
+                # Extract base URL (without anchor)
+                base_url = r["url"].split('#')[0]
+                count = url_counts.get(base_url, 0)
+
+                # Keep top 2 sections per page
+                if count < 2:
+                    url_counts[base_url] = count + 1
                     deduplicated_results.append(r)
+
             results = deduplicated_results[:top_k]
 
-            logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} unique URLs")
+            logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} results (max 2 sections per page)")
 
         logger.info(f"[DOC_SEARCH] Found {len(results)} results for: {query}")
         logger.debug(f"[DOC_SEARCH] === FINAL RESULTS ({len(results)} total) ===")
