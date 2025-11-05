@@ -100,6 +100,32 @@ fi
 
 echo -e "${GREEN}✓ Favicons and logos applied${NC}"
 
+# Apply carousel/splash screen images
+echo "🖼️  Applying HashiCorp carousel images for onboarding splash screen..."
+
+CAROUSEL_SOURCE_DIR="$BRANDING_DIR/carousel_images"
+if [ -d "$CAROUSEL_SOURCE_DIR" ]; then
+    CAROUSEL_TARGET=""
+    if [ -n "$OPENWEBUI_FRONTEND_STATIC" ] && [ -d "$OPENWEBUI_FRONTEND_STATIC/../assets/images" ]; then
+        CAROUSEL_TARGET="$OPENWEBUI_FRONTEND_STATIC/../assets/images"
+    elif [ -d "$OPENWEBUI_STATIC/../assets/images" ]; then
+        CAROUSEL_TARGET="$OPENWEBUI_STATIC/../assets/images"
+    fi
+
+    if [ -n "$CAROUSEL_TARGET" ]; then
+        # Replace default carousel images with HashiCorp-branded ones
+        [ -f "$CAROUSEL_SOURCE_DIR/image1.jpg" ] && cp "$CAROUSEL_SOURCE_DIR/image1.jpg" "$CAROUSEL_TARGET/adam.jpg"
+        [ -f "$CAROUSEL_SOURCE_DIR/image2.jpg" ] && cp "$CAROUSEL_SOURCE_DIR/image2.jpg" "$CAROUSEL_TARGET/galaxy.jpg"
+        [ -f "$CAROUSEL_SOURCE_DIR/image3.jpg" ] && cp "$CAROUSEL_SOURCE_DIR/image3.jpg" "$CAROUSEL_TARGET/earth.jpg"
+        [ -f "$CAROUSEL_SOURCE_DIR/image4.jpg" ] && cp "$CAROUSEL_SOURCE_DIR/image4.jpg" "$CAROUSEL_TARGET/space.jpg"
+        echo -e "${GREEN}✓ Carousel images applied${NC}"
+    else
+        echo -e "${YELLOW}⚠ Warning: Could not find carousel images directory${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Warning: Carousel images not found in branding directory${NC}"
+fi
+
 # Apply text changes (page title and sign-in text)
 echo "📝 Applying Ivan branding to text..."
 
@@ -119,6 +145,20 @@ fi
 if [ -n "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
     # Find all .js files and replace "Open WebUI" with "Ivan"
     find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Open WebUI/Ivan/g' {} \;
+
+    # Replace splash screen text with HashiCorp/Ivan branding
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Discover wonders/Accelerate innovation/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/wherever you are/with Ivan AI/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Explore the cosmos/Simplify complexity/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Unlock mysteries/Unlock potential/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Chart new frontiers/Drive efficiency/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Dive into knowledge/Transform workflows/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Ignite curiosity/Empower teams/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Forge new paths/Optimize solutions/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Unravel secrets/Streamline processes/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Pioneer insights/Deliver value/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/Embark on adventures/Scale success/g' {} \;
+
     echo -e "${GREEN}✓ JavaScript text replacements applied${NC}"
 else
     echo -e "${YELLOW}⚠ Warning: Could not find _app directory${NC}"
@@ -160,9 +200,30 @@ if [ -n "$ENV_PY" ] && [ -f "$ENV_PY" ]; then
     sed -i.bak 's/WEBUI_NAME = os.environ.get("WEBUI_NAME", "Open WebUI")/WEBUI_NAME = os.environ.get("WEBUI_NAME", "Ivan")/g' "$ENV_PY"
     # Remove the line that appends " (Open WebUI)"
     sed -i.bak '/if WEBUI_NAME != "Open WebUI":/,+1d' "$ENV_PY"
+
+    # Disable "What's New" changelog modal by default
+    if grep -q "SHOW_ADMIN_DETAILS =" "$ENV_PY"; then
+        # Add CHANGELOG setting after SHOW_ADMIN_DETAILS
+        if ! grep -q "CHANGELOG_ENABLED" "$ENV_PY"; then
+            sed -i.bak '/SHOW_ADMIN_DETAILS = /a\
+CHANGELOG_ENABLED = os.environ.get("CHANGELOG_ENABLED", "False").lower() == "true"
+' "$ENV_PY"
+        fi
+    fi
+
     echo -e "${GREEN}✓ Backend WEBUI_NAME updated${NC}"
 else
     echo -e "${YELLOW}⚠ Warning: Could not find env.py${NC}"
+fi
+
+# Disable "What's New" modal in JavaScript (set default to false)
+echo "📝 Disabling \"What's New\" changelog modal..."
+if [ -n "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
+    # Find and modify the JavaScript that controls the "What's New" setting
+    # The setting is typically stored as showChangelog or whatsNewModal
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/showChangelog:!0/showChangelog:!1/g' {} \;
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/"whatsNew":true/"whatsNew":false/g' {} \;
+    echo -e "${GREEN}✓ Changelog modal disabled${NC}"
 fi
 
 echo ""

@@ -24,6 +24,19 @@ HashiCorp logo in various sizes for favicons, app icons, and splash screens:
 | `splash-dark.png` | 256×256 | Loading screen (dark mode) |
 | `hashicorp-logo-notext.png` | Source | HashiCorp logo without text |
 
+### carousel_images/
+
+Background images for the first-run onboarding splash screen carousel. These images cycle in the background of the "Accelerate innovation with Ivan AI" splash screen:
+
+| File | Description |
+|------|-------------|
+| `image1.jpg` | First carousel image (replaces adam.jpg) |
+| `image2.jpg` | Second carousel image (replaces galaxy.jpg) |
+| `image3.jpg` | Third carousel image (replaces earth.jpg) |
+| `image4.jpg` | Fourth carousel image (replaces space.jpg) |
+
+**Default:** Currently uses HashiCorp logo/branding images. You can replace these with any JPG images (recommended size: 1920×1080 or larger for best quality on high-DPI displays).
+
 ## Applying Branding
 
 From the project root, run:
@@ -35,6 +48,8 @@ From the project root, run:
 This script:
 - Copies all favicon/logo assets to the Open Web UI installation
 - Replaces all "Open WebUI" text with "Ivan" in HTML and JavaScript files
+- Replaces onboarding splash screen background images with HashiCorp branding
+- Replaces splash screen text with HashiCorp/Ivan-themed phrases
 - Updates the backend WEBUI_NAME configuration
 - Applies minimal custom CSS
 
@@ -46,8 +61,9 @@ The branding script customizes:
 1. **Page title**: "Open WebUI" → "Ivan"
 2. **All UI text**: "Open WebUI" → "Ivan" throughout the interface
 3. **Favicon**: HashiCorp hexagon logo
-4. **Splash screen**: HashiCorp logo (no text) during page loads
-5. **PWA icons**: HashiCorp branding for installed web app
+4. **Splash screen images**: HashiCorp-branded carousel backgrounds for first-run onboarding
+5. **Splash screen text**: Enterprise-focused phrases like "Accelerate innovation with Ivan AI"
+6. **PWA icons**: HashiCorp branding for installed web app
 
 ## Customization
 

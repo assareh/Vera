@@ -75,17 +75,29 @@ Ivan includes a Chrome extension for automating SE Weekly Updates and WARMER wit
 
 ### Installation
 
+**Prerequisites:**
+- [pyenv](https://github.com/pyenv/pyenv) (for Python version management)
+  - macOS: `brew install pyenv`
+  - Linux: `curl https://pyenv.run | bash`
+
+**Setup:**
 ```bash
 # Clone or navigate to the project directory
 cd Ivan
 
-# Install dependencies
-pip install -r requirements.txt
+# Run the setup script (handles everything)
+./setup.sh
 
-# Optional: Install Open Web UI and apply HashiCorp branding
-pip install open-webui
-./apply_branding.sh
+# Activate the virtual environment
+source venv/bin/activate
 ```
+
+**What the setup script does:**
+- Verifies/installs Python 3.12.0 via pyenv
+- Creates a virtual environment with the correct Python version
+- Installs all dependencies including Open Web UI
+- Applies HashiCorp branding automatically
+- Ensures compatibility across different systems
 
 ### Running Ivan
 
@@ -148,22 +160,21 @@ export NOTES_DIR=notes
 export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
 ```
 
-## HashiCorp Branding (Optional)
+## HashiCorp Branding
 
-Ivan includes HashiCorp branding for the Open Web UI interface. After installing Open Web UI, apply the branding with:
+Ivan includes HashiCorp branding for the Open Web UI interface. This is applied automatically during the initial setup (`./setup.sh`).
 
-```bash
-./apply_branding.sh
-```
-
-This applies:
+**What gets branded:**
 - **HashiCorp logos and favicons** throughout the UI
 - **"Ivan" name** replaces all "Open WebUI" text
 - **Splash screen** with HashiCorp logo during page loads
 
 The branding assets are stored in the `branding/` directory and can be customized as needed.
 
-**Note**: Run this script whenever you reinstall or upgrade Open Web UI to reapply the branding.
+**Note**: If you manually upgrade Open Web UI, you can reapply branding with:
+```bash
+./apply_branding.sh
+```
 
 ## Usage
 
@@ -172,7 +183,21 @@ The branding assets are stored in the `branding/` directory and can be customize
 1. Start Ivan: `python ivan.py`
 2. Open Web UI will automatically start on port 8001 (or port + 1)
 3. Access the Web UI at `http://localhost:8001`
-4. Configure Open Web UI to use Ivan at `http://localhost:8000/v1`
+
+**First-time setup:**
+
+On your first visit, you'll see a HashiCorp-branded onboarding splash screen with phrases like "Accelerate innovation with Ivan AI" rotating in the background.
+
+1. Click "Get started" to proceed
+2. **Create a local admin account** by entering:
+   - Your name
+   - Email address
+   - Password (and confirmation)
+3. Click "Create Admin Account"
+
+**Important:** This account is stored locally on your machine only - it's just for accessing the Open Web UI interface and is not connected to any external service.
+
+Once logged in, the Web UI is pre-configured to use Ivan at `http://localhost:8000/v1` - no additional configuration needed!
 
 ### With API Clients
 

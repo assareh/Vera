@@ -1,25 +1,21 @@
-flask==3.0.0
-flask-cors==4.0.0
-langchain==0.3.27
+flask>=3.0.0
+flask-cors>=4.0.0
+langchain>=0.3.27
 langchain-community>=0.0.13
-langchain-huggingface==0.3.1
+langchain-huggingface>=0.3.1
 langchain-text-splitters>=0.3.0
-requests==2.31.0
-python-dotenv==1.0.0
-click==8.1.7
-duckduckgo-search==4.4.3
+requests>=2.31.0
+python-dotenv>=1.0.0
+click>=8.1.7
+duckduckgo-search>=4.4.3
 ollama>=0.6.0
 
-# Semantic search for PDF documents
+# Semantic search for web documentation
 sentence-transformers>=2.3.0
-faiss-cpu==1.8.0
-pypdf==3.17.4
+faiss-cpu>=1.8.0
 
-# Automated PDF downloads
-selenium==4.16.0
-webdriver-manager==4.0.1
-beautifulsoup4==4.12.3
+# Web scraping for HashiCorp docs
+beautifulsoup4>=4.12.3
 
-# Optional: Install open-webui separately if you want the Web UI
-# Note: open-webui requires Python 3.11-3.12
-# pip install open-webui
+# Web UI (requires Python 3.11-3.12, not compatible with 3.14+)
+open-webui>=0.1.0

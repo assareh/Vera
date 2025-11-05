@@ -59,7 +59,8 @@ Ivan/
 ├── tools.py                     # Tool definitions (LangChain)
 ├── hashicorp_web_search.py      # Web crawler search (LangChain FAISS)
 ├── system_prompt.md             # System prompt (auto-cached)
-├── requirements.txt             # Python dependencies
+├── requirements.txt             # Python dependencies (includes open-webui)
+├── setup.sh                     # Automated setup script (Python + venv + deps)
 ├── .env.example                 # Example environment variables
 ├── .python-version              # Python version (3.12.0)
 │
@@ -158,23 +159,35 @@ CUSTOMER_NOTES_DIR=Customer_Notes  # Or absolute path
 
 ### Quick Start
 
+**First-time setup (or after Python version updates):**
 ```bash
+# Run setup script to create venv with correct Python version
+# This automatically installs all dependencies and applies HashiCorp branding
+./setup.sh
+
 # Activate virtual environment
 source venv/bin/activate
+```
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Optional: Install Open Web UI
-pip install open-webui
+**Subsequent runs:**
+```bash
+# Just activate the virtual environment
+source venv/bin/activate
 
 # Run Ivan
 python ivan.py                           # Default: LM Studio, port 8000, with Web UI
 python ivan.py --backend ollama          # Use Ollama backend
-python ivan.py --no-webui                # Skip Web UI (for Python 3.14+)
+python ivan.py --no-webui                # Skip Web UI
 python ivan.py --port 8080               # Custom port
 python ivan.py --debug                   # Debug mode
 ```
+
+**What setup.sh does:**
+- Ensures Python 3.12.0 is used via pyenv
+- Creates virtual environment with correct Python version
+- Installs all dependencies including Open Web UI
+- Applies HashiCorp branding automatically
+- If you manually upgrade Open Web UI later, reapply branding with `./apply_branding.sh`
 
 ### Extension Development
 
