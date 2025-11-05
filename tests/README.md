@@ -7,23 +7,30 @@ This directory contains tests for the Ivan AI assistant, particularly focused on
 ### Regression Tests (Required)
 
 #### `test_comparison.py`
-**Purpose**: Primary regression test for HashiCorp PDF search quality.
+**Purpose**: Comprehensive regression test suite for HashiCorp documentation search quality.
 
 **What it tests**:
 - Tests the LangChain-based FAISS implementation
 - Validates search accuracy against known correct answers
 - Ensures chunking and retrieval strategies work correctly
+- Multiple test cases covering different products and query types
 
-**Key test case**:
-- Query: "what's the consul default for stale reads"
-- Expected: Finds "By default, Consul enables stale reads and sets the max_stale value to 10 years"
-- Source: Consul Operating Guide for Adoption, section 8.3.6
+**Current test cases**:
+
+1. **Consul Stale Reads Default**
+   - Query: "what's the consul default for stale reads"
+   - Expected: "By default, Consul enables stale reads and sets the max_stale value to 10 years"
+   - Source: Consul Operating Guide for Adoption, section 8.3.6
+
+2. **Vault Disk Throughput Requirements**
+   - Query: "what disk throughput is needed to run vault"
+   - Expected: "Small clusters: 75+ MB/s, Large clusters: 250+ MB/s"
+   - Source: Vault Solution Design Guide - Validated Designs, Detailed Design section
 
 **Pass criteria**:
-- ✅ Must find 'max_stale' AND '10 years'
-- ✅ Must reference Adoption guide
-- ✅ Must indicate stale reads are enabled by default
-- ❌ Must NOT contain incorrect information (e.g., "defaults to false")
+- Each test case has `must_contain`, `should_contain`, and `must_not_contain` criteria
+- Test passes with 75% or higher score
+- All test cases must pass for overall pass
 
 **Run**:
 ```bash
@@ -31,7 +38,9 @@ source venv/bin/activate
 python tests/test_comparison.py
 ```
 
-**Expected output**: `V2 (LangChain): ✅ PASS`
+**Expected output**: `Overall: 2/2 tests passed`
+
+**Adding new test cases**: Simply add a new dictionary to the `TEST_CASES` list in the file
 
 ---
 

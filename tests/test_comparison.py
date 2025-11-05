@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Compare v1 (raw FAISS) vs v2 (LangChain FAISS) implementations.
+"""Comprehensive search quality regression test.
 
-Test case: Consul stale reads default configuration.
-Expected answer: "By default, Consul enables stale reads and sets the max_stale value to 10 years."
-Source: Consul Operating Guide for Adoption, section 8.3.6
+This test validates that the HashiCorp documentation search returns correct
+answers for known queries. Add new test cases as you discover search quality
+issues or want to validate specific behaviors.
 """
 import logging
 import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Configure logging
 logging.basicConfig(
@@ -15,67 +19,137 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def test_v2():
-    """Test the new LangChain-based implementation."""
-    print("\n" + "=" * 80)
-    print("TESTING V2 (LangChain FAISS Implementation)")
-    print("=" * 80)
+
+# Test cases: Each test case defines a query and validation criteria
+TEST_CASES = [
+    {
+        "name": "Consul Stale Reads Default",
+        "query": "what's the consul default for stale reads",
+        "product": "consul",
+        "source": "Consul Operating Guide for Adoption, section 8.3.6",
+        "expected": "By default, Consul enables stale reads and sets the max_stale value to 10 years",
+        "must_contain": [
+            ("max_stale", "10 years"),  # Both must be present
+        ],
+        "should_contain": [
+            "adoption",  # Should reference the Adoption guide
+            "enables stale reads",  # Should indicate it's enabled by default
+        ],
+        "must_not_contain": [
+            "defaults to false",  # Common incorrect answer
+            "stale = false",
+        ],
+    },
+    {
+        "name": "Vault Disk Throughput Requirements",
+        "query": "what disk throughput is needed to run vault",
+        "product": "vault",
+        "source": "Vault Solution Design Guides - Validated Designs, Detailed Design section",
+        "expected": "Small clusters: 75+ MB/s, Large clusters: 250+ MB/s",
+        "must_contain": [
+            ("75", "mb/s"),  # Small cluster requirement
+        ],
+        "should_contain": [
+            "250",  # Large cluster requirement
+            "throughput",
+            "disk",
+        ],
+        "must_not_contain": [
+            "iops only",  # Should mention throughput, not just IOPS
+        ],
+    },
+]
+
+
+def validate_test_case(test_case, results):
+    """Validate search results against test case criteria.
+
+    Returns:
+        tuple: (passed, score, max_score, details)
+    """
+    details = []
+    score = 0
+    max_score = 0
+    results_lower = results.lower()
+
+    # Check must_contain (critical - worth 2 points each)
+    for items in test_case["must_contain"]:
+        max_score += 2
+        if isinstance(items, tuple):
+            # All items in tuple must be present
+            if all(item.lower() in results_lower for item in items):
+                details.append(f"   ✅ CRITICAL: Found all of {items}")
+                score += 2
+            elif any(item.lower() in results_lower for item in items):
+                details.append(f"   ⚠️  PARTIAL: Found some of {items}")
+                score += 1
+            else:
+                details.append(f"   ❌ CRITICAL: Missing {items}")
+        else:
+            if items.lower() in results_lower:
+                details.append(f"   ✅ CRITICAL: Found '{items}'")
+                score += 2
+            else:
+                details.append(f"   ❌ CRITICAL: Missing '{items}'")
+
+    # Check should_contain (important - worth 1 point each)
+    for item in test_case["should_contain"]:
+        max_score += 1
+        if item.lower() in results_lower:
+            details.append(f"   ✅ Found '{item}'")
+            score += 1
+        else:
+            details.append(f"   ⚠️  Missing '{item}'")
+
+    # Check must_not_contain (critical - deducts 2 points)
+    for item in test_case["must_not_contain"]:
+        if item.lower() in results_lower:
+            details.append(f"   ❌ FAIL: Contains incorrect info '{item}'")
+            score -= 2
+
+    passed = score >= (max_score * 0.75)  # Pass if 75% or better
+
+    return passed, score, max_score, details
+
+
+def run_test_case(test_case, search_func):
+    """Run a single test case.
+
+    Returns:
+        bool: True if test passed, False otherwise
+    """
+    print(f"\n{'='*80}")
+    print(f"TEST: {test_case['name']}")
+    print(f"{'='*80}")
+
+    print(f"\nQuery: '{test_case['query']}'")
+    print(f"Expected: {test_case['expected']}")
+    print(f"Source: {test_case['source']}")
 
     try:
-        # Add parent directory to path to import modules from project root
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent))
+        # Search
+        print(f"\nSearching...")
+        results = search_func(
+            test_case['query'],
+            top_k=5,
+            product=test_case.get('product')
+        )
 
-        from hashicorp_pdf_search import initialize_pdf_search, search_pdfs
-
-        print("\n1. Initializing V2 index...")
-        initialize_pdf_search()
-
-        query = "what's the consul default for stale reads"
-        print(f"\n2. Query: '{query}'")
-
-        print("\n3. Searching...")
-        results = search_pdfs(query, top_k=5, product="consul")
-
-        print("\n4. Results:")
+        print(f"\nResults Preview (first 500 chars):")
         print("-" * 80)
-        print(results)
+        print(results[:500] + "..." if len(results) > 500 else results)
         print("-" * 80)
 
-        # Analysis
-        print("\n5. Analysis:")
-        success_count = 0
+        # Validate
+        passed, score, max_score, details = validate_test_case(test_case, results)
 
-        if "max_stale" in results.lower() and "10 years" in results.lower():
-            print("   ✅ PASS: Found both 'max_stale' and '10 years'")
-            success_count += 1
-        elif "max_stale" in results.lower() or "10 years" in results.lower():
-            print("   ⚠️  PARTIAL: Found one of 'max_stale' or '10 years'")
-            success_count += 0.5
-        else:
-            print("   ❌ FAIL: Did not find 'max_stale' or '10 years'")
+        print(f"\nValidation:")
+        for detail in details:
+            print(detail)
+        print(f"\n   Score: {score}/{max_score} ({score/max_score*100:.1f}%)")
+        print(f"   Result: {'✅ PASS' if passed else '❌ FAIL'}")
 
-        if "adoption" in results.lower():
-            print("   ✅ PASS: Found reference to Adoption guide")
-            success_count += 1
-        else:
-            print("   ⚠️  WARNING: No reference to Adoption guide")
-
-        if "enables stale reads" in results.lower() or "allow_stale = true" in results.lower():
-            print("   ✅ PASS: Found evidence that stale reads are enabled by default")
-            success_count += 1
-        else:
-            print("   ⚠️  WARNING: Unclear about default enabled status")
-
-        # Check for wrong information
-        if "stale" in results.lower() and "false" in results.lower() and "default" in results.lower():
-            print("   ❌ FAIL: Contains incorrect 'defaults to false' information")
-            success_count -= 1
-
-        print(f"\n   Overall: {success_count}/3 checks passed")
-
-        return success_count >= 2.5  # Require at least 2.5/3 to pass
+        return passed
 
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
@@ -85,26 +159,45 @@ def test_v2():
 
 
 def main():
-    """Run comparison tests."""
-    print("\n" + "=" * 80)
-    print("CONSUL STALE READS TEST - V2 Implementation")
-    print("=" * 80)
-    print("\nExpected Answer:")
-    print("  'By default, Consul enables stale reads and sets the max_stale value to 10 years.'")
-    print("  Source: Consul Operating Guide for Adoption, section 8.3.6")
-    print("\n" + "=" * 80)
+    """Run all search quality tests."""
+    print("\n" + "="*80)
+    print("HASHICORP SEARCH QUALITY - REGRESSION TEST SUITE")
+    print("="*80)
+    print(f"\nRunning {len(TEST_CASES)} test cases...")
 
-    # Test V2
-    v2_passed = test_v2()
+    # Initialize search
+    try:
+        from hashicorp_pdf_search import initialize_pdf_search, search_pdfs
+        print("\nInitializing search index...")
+        initialize_pdf_search()
+        search_func = search_pdfs
+    except Exception as e:
+        print(f"\n❌ Failed to initialize search: {e}")
+        return 1
+
+    # Run all test cases
+    results = {}
+    for test_case in TEST_CASES:
+        passed = run_test_case(test_case, search_func)
+        results[test_case['name']] = passed
 
     # Summary
-    print("\n" + "=" * 80)
+    print(f"\n{'='*80}")
     print("TEST SUMMARY")
-    print("=" * 80)
-    print(f"V2 (LangChain): {'✅ PASS' if v2_passed else '❌ FAIL'}")
-    print("=" * 80)
+    print(f"{'='*80}")
 
-    return 0 if v2_passed else 1
+    for name, passed in results.items():
+        status = "✅ PASS" if passed else "❌ FAIL"
+        print(f"{status}: {name}")
+
+    passed_count = sum(1 for p in results.values() if p)
+    total_count = len(results)
+
+    print(f"\nOverall: {passed_count}/{total_count} tests passed")
+    print("="*80)
+
+    # Return 0 if all passed, 1 otherwise
+    return 0 if passed_count == total_count else 1
 
 
 if __name__ == "__main__":
