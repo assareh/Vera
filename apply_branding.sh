@@ -77,6 +77,8 @@ FAVICON_FILES=(
     "favicon.png:logo.png"
     "web-app-manifest-192x192.png:web-app-manifest-192x192.png"
     "web-app-manifest-512x512.png:web-app-manifest-512x512.png"
+    "splash.png:splash.png"
+    "splash-dark.png:splash-dark.png"
 )
 
 for mapping in "${FAVICON_FILES[@]}"; do
@@ -90,6 +92,11 @@ for mapping in "${FAVICON_FILES[@]}"; do
         echo -e "${YELLOW}⚠ Warning: $source_file not found, skipping${NC}"
     fi
 done
+
+# Also copy favicon.png to the frontend root directory (outside static/)
+if [ -n "$OPENWEBUI_FRONTEND_STATIC" ] && [ -f "$BRANDING_DIR/favicons/favicon.png" ]; then
+    cp "$BRANDING_DIR/favicons/favicon.png" "$OPENWEBUI_FRONTEND_STATIC/../favicon.png"
+fi
 
 echo -e "${GREEN}✓ Favicons and logos applied${NC}"
 
