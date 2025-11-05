@@ -404,6 +404,21 @@ Tools return plain strings. The Flask app converts them to OpenAI-compatible fun
 - Verify all referenced files exist
 - Check Chrome console for errors
 
+**Dependency Installation Issues**
+
+*ImportError: cannot import name 'cached_download' from 'huggingface_hub'*
+- This occurs when sentence-transformers is too old (< 2.3.0)
+- **Fixed in requirements.txt** (now uses `sentence-transformers>=2.3.0`)
+- If you still see this after fresh install: `pip install --upgrade sentence-transformers`
+- Verified working with sentence-transformers 5.1.2 + huggingface-hub 0.36.0
+
+**Web Documentation Index Build Fails or Hangs**
+- Check logs in `build_index_*.log` for specific errors
+- Verify internet connection and access to developer.hashicorp.com
+- Check available disk space (index requires ~500MB-1GB)
+- If process is stuck, check with: `./check_build_progress.sh`
+- To rebuild from scratch: `rm -rf hashicorp_web_docs/` then run `./run_build_index.sh`
+
 ## Related Documentation
 
 - **README.md** - User-facing documentation with setup instructions
