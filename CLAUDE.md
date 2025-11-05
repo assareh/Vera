@@ -54,31 +54,47 @@ Browser extension for automating SE Weekly Updates with AI assistance.
 
 ```
 Ivan/
-├── ivan.py                 # Main Flask application
-├── config.py              # Configuration management
-├── tools.py               # Tool definitions (LangChain)
-├── system_prompt.md       # System prompt (auto-cached)
-├── requirements.txt       # Python dependencies
-├── .env.example          # Example environment variables
-├── .python-version       # Python version (3.12.0)
+├── ivan.py                      # Main Flask application
+├── config.py                    # Configuration management
+├── tools.py                     # Tool definitions (LangChain)
+├── hashicorp_pdf_search.py      # PDF RAG implementation (LangChain FAISS)
+├── system_prompt.md             # System prompt (auto-cached)
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Example environment variables
+├── .python-version              # Python version (3.12.0)
 │
-├── notes/                # Personal notes directory
-├── Customer_Notes/       # Symlink to customer meeting notes (optional)
-│   └── [A-Z]/           # Alphabetically organized by customer
+├── notes/                       # Personal notes directory
+├── Customer_Notes/              # Symlink to customer meeting notes (optional)
+│   └── [A-Z]/                   # Alphabetically organized by customer
 │       └── [Customer]/
 │           └── 10_Meetings/
-│               └── *.md  # Meeting notes (YYYY-MM-DD_Title.md)
+│               └── *.md         # Meeting notes (YYYY-MM-DD_Title.md)
 │
-├── hashicorp_pdfs/      # HashiCorp PDF documentation cache
-├── ivan-extension/      # Chrome extension
+├── hashicorp_pdfs/              # HashiCorp PDF documentation cache
+│   ├── pdfs/                    # Downloaded PDF files
+│   ├── index_v2/                # LangChain FAISS index
+│   │   ├── index.faiss          # FAISS vector index
+│   │   └── index.pkl            # Document metadata
+│   └── metadata_v2.json         # Index metadata & update tracking
+│
+├── tests/                       # Test suite (see tests/README.md)
+│   ├── README.md                # Test documentation
+│   ├── test_comparison.py       # Primary regression test (REQUIRED)
+│   ├── test_consul_stale_reads.py
+│   ├── test_debug_chunks.py
+│   ├── test_hashicorp_search.py
+│   ├── test_pdf_search.py
+│   └── test_selenium_download.py
+│
+├── ivan-extension/              # Chrome extension
 │   ├── manifest.json
 │   ├── popup.html/js/css
 │   ├── content.js/css
 │   ├── background.js
 │   └── icon*.png
 │
-├── venv/                # Python virtual environment (3.12.0)
-└── docs/                # Documentation and images
+├── venv/                        # Python virtual environment (3.12.0)
+└── docs/                        # Documentation and images
 ```
 
 ## Technology Stack
@@ -252,19 +268,84 @@ Content-Type: application/json
 
 ## Testing
 
-### Test Files
-- `test_hashicorp_search.py` - HashiCorp documentation search tests
-- `test_pdf_search.py` - PDF semantic search tests
-- `test_selenium_download.py` - PDF download automation tests
+All tests are located in the `tests/` directory. See `tests/README.md` for detailed documentation.
 
-### Running Tests
+### Regression Tests (REQUIRED)
+
+**IMPORTANT**: Before deploying changes to search functionality, you MUST run regression tests and ensure they pass.
+
+#### Primary Regression Test
+```bash
+source venv/bin/activate
+python tests/test_comparison.py
+```
+
+**Expected output**: `V2 (LangChain): ✅ PASS`
+
+This test validates the HashiCorp PDF search implementation against known correct answers. It ensures:
+- Semantic search finds the correct documents and sections
+- Chunking strategy preserves important information
+- Results include enough context for the LLM to answer accurately
+
+**Critical test case**: Consul stale reads default configuration
+- **Query**: "what's the consul default for stale reads"
+- **Expected answer**: "By default, Consul enables stale reads and sets the max_stale value to 10 years"
+- **Source**: Consul Operating Guide for Adoption, section 8.3.6
+- **Why it matters**: This specific case caught a bug where the previous implementation returned incorrect information
+
+### Running All Tests
+
 ```bash
 # Activate venv first
 source venv/bin/activate
 
-# Run specific test
-python test_hashicorp_search.py
+# Run primary regression test
+python tests/test_comparison.py
+
+# Run all tests
+for test in tests/test_*.py; do
+    echo "Running $test..."
+    python "$test" || echo "FAILED: $test"
+done
 ```
+
+### Test Files
+
+Located in `tests/` directory:
+- `test_comparison.py` - **Primary regression test** for search quality (REQUIRED)
+- `test_consul_stale_reads.py` - Specific test for Consul stale reads query
+- `test_debug_chunks.py` - Debug tool to inspect chunk content
+- `test_hashicorp_search.py` - HashiCorp documentation search tests
+- `test_pdf_search.py` - PDF semantic search tests
+- `test_selenium_download.py` - PDF download automation tests
+
+### When to Run Regression Tests
+
+Run `tests/test_comparison.py` before committing changes to:
+- `hashicorp_pdf_search.py` - Search implementation
+- `tools.py` - Tool definitions (especially `search_hashicorp_docs`)
+- Embedding models or chunking strategies
+- FAISS index configuration
+- Any RAG-related code
+
+### Adding New Regression Tests
+
+When fixing search quality bugs:
+1. Create a test with the problematic query and expected answer
+2. Add it to `tests/test_comparison.py` or create a new test file
+3. Verify the fix makes the test pass
+4. Document the test in `tests/README.md`
+5. Update this section if the test becomes critical
+
+### Test Implementation Details
+
+The current regression test (`test_comparison.py`) uses:
+- **LangChain FAISS** for vector search
+- **RecursiveCharacterTextSplitter** (1000 chars, 200 overlap)
+- **all-MiniLM-L6-v2** embeddings
+- **900 character** result preview (ensures LLM gets enough context)
+
+Changes to these parameters may require updating test expectations.
 
 ## Important Patterns and Conventions
 
