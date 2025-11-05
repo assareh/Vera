@@ -19,6 +19,7 @@ import click
 import config
 from tools import ALL_TOOLS
 from hashicorp_web_search import initialize_web_search
+from web_index_manager import initialize_on_startup as init_web_index_manager
 
 
 app = Flask(__name__)
@@ -537,6 +538,14 @@ def health():
     })
 
 
+@app.route("/index/status", methods=["GET"])
+def index_status():
+    """Get status of the web documentation index."""
+    from web_index_manager import get_status
+    status = get_status()
+    return jsonify(status)
+
+
 def start_webui(port: int):
     """Start Open Web UI as a subprocess."""
     global _webui_process
@@ -635,20 +644,9 @@ API: http://localhost:{port}/v1
     # Create notes directory if it doesn't exist
     Path(config.NOTES_DIR).mkdir(exist_ok=True)
 
-    # Initialize HashiCorp web documentation search index in background
-    print("Initializing HashiCorp developer documentation search index...")
-    print("(This runs in the background and won't block startup)")
-
-    def init_web_search_background():
-        """Initialize web search in background thread."""
-        try:
-            initialize_web_search()
-            print("✓ HashiCorp developer documentation search index ready")
-        except Exception as e:
-            print(f"✗ Warning: Failed to initialize web search: {e}")
-
-    web_thread = threading.Thread(target=init_web_search_background, daemon=True)
-    web_thread.start()
+    # Initialize HashiCorp web documentation search index
+    # This will automatically build/update the index in the background if needed
+    init_web_index_manager(silent=False)
 
     # Start Web UI if requested
     if not no_webui:

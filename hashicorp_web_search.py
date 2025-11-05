@@ -26,6 +26,18 @@ from langchain.schema import Document
 
 # Configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Enable debug logging
+
+# Add console handler with formatting if not already added
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 # Sitemap URL
 SITEMAP_URL = "https://developer.hashicorp.com/server-sitemap.xml"
@@ -70,6 +82,9 @@ class HashiCorpWebSearchIndex:
 
         self.metadata_file = self.cache_dir / "metadata.json"
         self.sitemap_file = self.cache_dir / "sitemap.xml"
+        self.chunks_file = self.cache_dir / "chunks.json"
+        self.url_list_file = self.cache_dir / "url_list.json"
+        self.embedding_progress_file = self.cache_dir / "embedding_progress.json"
 
         self.model_name = model_name
         self.update_check_interval = timedelta(hours=update_check_interval_hours)
@@ -200,11 +215,15 @@ class HashiCorpWebSearchIndex:
 
         try:
             logger.info("[WEB_SEARCH] Discovering validated-designs pages...")
+            logger.debug(f"[WEB_SEARCH] Fetching {base_url}/validated-designs")
 
             # Fetch the index page
             headers = {'User-Agent': USER_AGENT}
+
+            logger.debug("[WEB_SEARCH] Requesting validated-designs index page...")
             response = requests.get(f"{base_url}/validated-designs", headers=headers, timeout=30)
             response.raise_for_status()
+            logger.debug(f"[WEB_SEARCH] Got response: {response.status_code}, {len(response.text)} bytes")
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -220,16 +239,24 @@ class HashiCorpWebSearchIndex:
 
             logger.info(f"[WEB_SEARCH] Found {len(guide_links)} validated-designs guide links")
 
+            if not guide_links:
+                logger.warning("[WEB_SEARCH] No guide links found, skipping validated-designs discovery")
+                return []
+
             # For each guide, crawl to find all pages
-            for guide_url in guide_links:
+            for idx, guide_url in enumerate(guide_links, 1):
                 try:
+                    logger.debug(f"[WEB_SEARCH] Crawling guide {idx}/{len(guide_links)}: {guide_url}")
                     time.sleep(self.rate_limit_delay)
+
                     response = requests.get(guide_url, headers=headers, timeout=30)
                     response.raise_for_status()
+                    logger.debug(f"[WEB_SEARCH] Got guide page: {len(response.text)} bytes")
 
                     soup = BeautifulSoup(response.text, 'html.parser')
 
                     # Find all links within this guide
+                    links_found = 0
                     for link in soup.find_all('a', href=True):
                         href = link['href']
                         if '/validated-designs/' in href:
@@ -246,12 +273,16 @@ class HashiCorpWebSearchIndex:
                                 "product": product,
                                 "lastmod": None
                             })
+                            links_found += 1
+
+                    logger.debug(f"[WEB_SEARCH] Found {links_found} links in guide {idx}/{len(guide_links)}")
 
                 except Exception as e:
                     logger.warning(f"[WEB_SEARCH] Failed to crawl guide {guide_url}: {e}")
                     continue
 
             # Deduplicate
+            logger.debug(f"[WEB_SEARCH] Deduplicating {len(discovered_urls)} URLs...")
             unique_urls = {url_info["url"]: url_info for url_info in discovered_urls}
             result = list(unique_urls.values())
 
@@ -260,6 +291,8 @@ class HashiCorpWebSearchIndex:
 
         except Exception as e:
             logger.error(f"[WEB_SEARCH] Failed to discover validated-designs: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
 
     def _can_fetch(self, url: str) -> bool:
@@ -428,6 +461,83 @@ class HashiCorpWebSearchIndex:
         except Exception as e:
             logger.warning(f"[WEB_SEARCH] Failed to cache page: {e}")
 
+    def _save_url_list(self, url_list: List[Dict[str, str]]):
+        """Save URL list to disk for resume capability."""
+        try:
+            self.url_list_file.write_text(json.dumps(url_list, indent=2))
+            logger.debug(f"[WEB_SEARCH] Saved {len(url_list)} URLs to {self.url_list_file}")
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Failed to save URL list: {e}")
+
+    def _load_url_list(self) -> Optional[List[Dict[str, str]]]:
+        """Load URL list from disk."""
+        if not self.url_list_file.exists():
+            return None
+        try:
+            url_list = json.loads(self.url_list_file.read_text())
+            logger.info(f"[WEB_SEARCH] Loaded {len(url_list)} URLs from cache")
+            return url_list
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Failed to load URL list: {e}")
+            return None
+
+    def _save_chunks(self, chunks: List[Document]):
+        """Save chunks to disk for resume capability."""
+        try:
+            # Convert Document objects to serializable dicts
+            chunk_dicts = [
+                {
+                    "page_content": chunk.page_content,
+                    "metadata": chunk.metadata
+                }
+                for chunk in chunks
+            ]
+            self.chunks_file.write_text(json.dumps(chunk_dicts))
+            logger.info(f"[WEB_SEARCH] Saved {len(chunks)} chunks to {self.chunks_file}")
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Failed to save chunks: {e}")
+
+    def _load_chunks(self) -> Optional[List[Document]]:
+        """Load chunks from disk."""
+        if not self.chunks_file.exists():
+            return None
+        try:
+            chunk_dicts = json.loads(self.chunks_file.read_text())
+            chunks = [
+                Document(
+                    page_content=chunk_dict["page_content"],
+                    metadata=chunk_dict["metadata"]
+                )
+                for chunk_dict in chunk_dicts
+            ]
+            logger.info(f"[WEB_SEARCH] Loaded {len(chunks)} chunks from cache")
+            return chunks
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Failed to load chunks: {e}")
+            return None
+
+    def _save_embedding_progress(self, completed_count: int, total_count: int):
+        """Save embedding progress."""
+        try:
+            progress = {
+                "completed": completed_count,
+                "total": total_count,
+                "timestamp": datetime.now().isoformat()
+            }
+            self.embedding_progress_file.write_text(json.dumps(progress))
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Failed to save embedding progress: {e}")
+
+    def _load_embedding_progress(self) -> Optional[Dict[str, Any]]:
+        """Load embedding progress."""
+        if not self.embedding_progress_file.exists():
+            return None
+        try:
+            return json.loads(self.embedding_progress_file.read_text())
+        except Exception as e:
+            logger.warning(f"[WEB_SEARCH] Failed to load embedding progress: {e}")
+            return None
+
     def _fetch_with_cache(self, url_info: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """Fetch page with caching support."""
         # Try cache first
@@ -455,6 +565,7 @@ class HashiCorpWebSearchIndex:
         total = len(url_list)
 
         logger.info(f"[WEB_SEARCH] Fetching content from {total} pages with {self.max_workers} parallel workers...")
+        logger.info(f"[WEB_SEARCH] Progress will be logged every 100 pages...")
 
         # Use ThreadPoolExecutor for parallel fetching
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -511,7 +622,7 @@ class HashiCorpWebSearchIndex:
             )
 
     def _build_index(self, url_list: List[Dict[str, str]]):
-        """Build FAISS index using LangChain.
+        """Build FAISS index using LangChain with resume capability.
 
         Args:
             url_list: List of URL info dicts from sitemap
@@ -521,27 +632,61 @@ class HashiCorpWebSearchIndex:
         # Initialize components
         self._initialize_components()
 
-        # Create documents
-        documents = self._create_documents(url_list)
+        # Try to load cached chunks first
+        chunks = self._load_chunks()
 
-        if not documents:
-            logger.error("[WEB_SEARCH] No documents to index!")
-            return
+        if chunks is None:
+            # Create documents
+            logger.info("[WEB_SEARCH] No cached chunks found, creating from documents...")
+            documents = self._create_documents(url_list)
 
-        # Split documents into chunks
-        logger.info("[WEB_SEARCH] Splitting documents into chunks...")
-        chunks = self.text_splitter.split_documents(documents)
-        logger.info(f"[WEB_SEARCH] Created {len(chunks)} chunks")
+            if not documents:
+                logger.error("[WEB_SEARCH] No documents to index!")
+                return
 
-        # Create FAISS index
-        logger.info("[WEB_SEARCH] Creating FAISS vector store...")
-        self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
+            # Split documents into chunks
+            logger.info("[WEB_SEARCH] Splitting documents into chunks...")
+            chunks = self.text_splitter.split_documents(documents)
+            logger.info(f"[WEB_SEARCH] Created {len(chunks)} chunks")
 
-        # Save to disk
-        logger.info("[WEB_SEARCH] Saving index to disk...")
-        self.vectorstore.save_local(str(self.index_dir))
+            # Save chunks to disk
+            self._save_chunks(chunks)
+        else:
+            logger.info(f"[WEB_SEARCH] Using {len(chunks)} cached chunks")
 
-        logger.info(f"[WEB_SEARCH] Index built with {len(chunks)} chunks from {len(documents)} pages")
+        # Create FAISS index with batching for progress tracking
+        logger.info("[WEB_SEARCH] Creating FAISS vector store (this may take a while)...")
+        logger.info(f"[WEB_SEARCH] Generating embeddings for {len(chunks)} chunks...")
+        logger.info("[WEB_SEARCH] Building index in batches to allow resumption...")
+
+        # Build index in batches
+        batch_size = 10000  # Process 10k chunks at a time
+        total_batches = (len(chunks) + batch_size - 1) // batch_size
+
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min((batch_idx + 1) * batch_size, len(chunks))
+            batch_chunks = chunks[start_idx:end_idx]
+
+            logger.info(f"[WEB_SEARCH] Processing batch {batch_idx + 1}/{total_batches} ({start_idx}-{end_idx}, {len(batch_chunks)} chunks)...")
+
+            if batch_idx == 0:
+                # Create initial index
+                self.vectorstore = FAISS.from_documents(batch_chunks, self.embeddings)
+            else:
+                # Add to existing index
+                batch_vectorstore = FAISS.from_documents(batch_chunks, self.embeddings)
+                self.vectorstore.merge_from(batch_vectorstore)
+
+            # Save progress after each batch
+            logger.info(f"[WEB_SEARCH] Saving progress after batch {batch_idx + 1}...")
+            self.vectorstore.save_local(str(self.index_dir))
+            self._save_embedding_progress(end_idx, len(chunks))
+
+            logger.info(f"[WEB_SEARCH] ✓ Batch {batch_idx + 1}/{total_batches} complete ({end_idx}/{len(chunks)} chunks)")
+
+        logger.info(f"[WEB_SEARCH] ✓ Index built successfully!")
+        logger.info(f"[WEB_SEARCH] ✓ {len(chunks)} chunks indexed")
 
     def _load_index(self) -> bool:
         """Load FAISS index from disk."""
@@ -567,7 +712,7 @@ class HashiCorpWebSearchIndex:
             return False
 
     def initialize(self, force_update: bool = False):
-        """Initialize the search index.
+        """Initialize the search index with resume capability.
 
         Args:
             force_update: Force rebuild even if cache is fresh
@@ -582,29 +727,57 @@ class HashiCorpWebSearchIndex:
             else:
                 logger.warning("[WEB_SEARCH] Failed to load cache, rebuilding")
 
-        # Download sitemap
-        if not self._download_sitemap():
-            logger.error("[WEB_SEARCH] Failed to download sitemap")
-            return
+        # Try to resume from saved URL list
+        url_list = self._load_url_list()
 
-        # Parse sitemap
-        url_list = self._parse_sitemap()
-        if not url_list:
-            logger.error("[WEB_SEARCH] No URLs found in sitemap")
-            return
+        if url_list is None or force_update:
+            # Download sitemap
+            logger.info("[WEB_SEARCH] Step 1: Downloading sitemap...")
+            if not self._download_sitemap():
+                logger.error("[WEB_SEARCH] Failed to download sitemap")
+                return
 
-        # Discover validated-designs pages (not in sitemap)
-        validated_designs = self._discover_validated_designs()
-        if validated_designs:
-            logger.info(f"[WEB_SEARCH] Adding {len(validated_designs)} validated-designs pages")
-            # Merge with sitemap, deduplicating by URL
-            all_urls = {url_info["url"]: url_info for url_info in url_list}
-            for url_info in validated_designs:
-                all_urls[url_info["url"]] = url_info
-            url_list = list(all_urls.values())
-            logger.info(f"[WEB_SEARCH] Total URLs after merging: {len(url_list)}")
+            # Parse sitemap
+            logger.info("[WEB_SEARCH] Step 2: Parsing sitemap...")
+            url_list = self._parse_sitemap()
+            if not url_list:
+                logger.error("[WEB_SEARCH] No URLs found in sitemap")
+                return
+            logger.info(f"[WEB_SEARCH] Found {len(url_list)} URLs in sitemap")
 
-        # Build index
+            # Discover validated-designs pages (not in sitemap)
+            logger.info("[WEB_SEARCH] Step 3: Discovering validated-designs pages...")
+            validated_designs = self._discover_validated_designs()
+            if validated_designs:
+                logger.info(f"[WEB_SEARCH] Adding {len(validated_designs)} validated-designs pages")
+                # Merge with sitemap, deduplicating by URL
+                all_urls = {url_info["url"]: url_info for url_info in url_list}
+                for url_info in validated_designs:
+                    all_urls[url_info["url"]] = url_info
+                url_list = list(all_urls.values())
+                logger.info(f"[WEB_SEARCH] Total URLs after merging: {len(url_list)}")
+
+            # Save URL list for resume capability
+            self._save_url_list(url_list)
+        else:
+            logger.info(f"[WEB_SEARCH] ✓ Resuming with {len(url_list)} URLs from cache")
+
+        # Check if we have cached chunks (scraping already done)
+        chunks = self._load_chunks()
+        if chunks:
+            logger.info(f"[WEB_SEARCH] ✓ Found {len(chunks)} cached chunks (scraping complete)")
+            logger.info("[WEB_SEARCH] Skipping to embedding generation...")
+
+        # Check embedding progress
+        progress = self._load_embedding_progress()
+        if progress:
+            logger.info(f"[WEB_SEARCH] ✓ Previous embedding progress: {progress['completed']}/{progress['total']} chunks")
+            logger.info(f"[WEB_SEARCH] Last saved: {progress['timestamp']}")
+
+        # Build index (will resume from cache if available)
+        logger.info("[WEB_SEARCH] Step 4: Building FAISS index...")
+        if not chunks:
+            logger.info(f"[WEB_SEARCH] This will fetch {len(url_list)} pages and create embeddings...")
         self._build_index(url_list)
 
         # Update metadata

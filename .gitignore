@@ -48,5 +48,11 @@ Thumbs.db
 # Notes (optional - remove if you want to commit your notes)
 notes/*
 !notes/example.md
+
+# Cache directories
 hashicorp_pdfs/
-ivan_tools_debug.log
+hashicorp_web_docs/
+
+# Runtime state files
+*.pid
+index_status
