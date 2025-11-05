@@ -9,7 +9,7 @@ duckduckgo-search==4.4.3
 ollama>=0.6.0
 
 # Semantic search for PDF documents
-sentence-transformers==2.2.2
+sentence-transformers>=2.3.0
 faiss-cpu==1.8.0
 pypdf==3.17.4
 
