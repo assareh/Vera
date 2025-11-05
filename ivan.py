@@ -18,7 +18,7 @@ import click
 
 import config
 from tools import ALL_TOOLS
-from hashicorp_web_search import initialize_web_search
+from hashicorp_doc_search import initialize_doc_search
 from web_index_manager import initialize_on_startup as init_web_index_manager
 
 
@@ -28,8 +28,6 @@ CORS(app)
 # Configure tool debug logging
 tools_logger = logging.getLogger("ivan.tools")
 if config.DEBUG_TOOLS:
-    tools_logger.setLevel(logging.DEBUG)
-
     # Create file handler
     log_file = Path(config.DEBUG_TOOLS_LOG_FILE)
     file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
@@ -37,15 +35,19 @@ if config.DEBUG_TOOLS:
 
     # Create formatter
     formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(formatter)
 
-    # Add handler to logger
-    tools_logger.addHandler(file_handler)
+    # Configure multiple loggers to write to the debug file
+    for logger_name in ["ivan.tools", "tools", "hashicorp_doc_search"]:
+        logger_obj = logging.getLogger(logger_name)
+        logger_obj.setLevel(logging.DEBUG)
+        logger_obj.addHandler(file_handler)
 
     print(f"Tool debug logging enabled: {log_file.absolute()}")
+    print(f"  Logging: ivan.tools, tools, hashicorp_doc_search")
 else:
     tools_logger.setLevel(logging.WARNING)
 

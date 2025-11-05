@@ -57,7 +57,7 @@ Ivan/
 ├── ivan.py                      # Main Flask application
 ├── config.py                    # Configuration management
 ├── tools.py                     # Tool definitions (LangChain)
-├── hashicorp_pdf_search.py      # PDF RAG implementation (LangChain FAISS)
+├── hashicorp_web_search.py      # Web crawler search (LangChain FAISS)
 ├── system_prompt.md             # System prompt (auto-cached)
 ├── requirements.txt             # Python dependencies
 ├── .env.example                 # Example environment variables
@@ -70,21 +70,20 @@ Ivan/
 │           └── 10_Meetings/
 │               └── *.md         # Meeting notes (YYYY-MM-DD_Title.md)
 │
-├── hashicorp_pdfs/              # HashiCorp PDF documentation cache
-│   ├── pdfs/                    # Downloaded PDF files
-│   ├── index_v2/                # LangChain FAISS index
+├── hashicorp_web_docs/          # HashiCorp web documentation cache
+│   ├── pages/                   # Cached HTML content
+│   ├── index/                   # LangChain FAISS vector index
 │   │   ├── index.faiss          # FAISS vector index
 │   │   └── index.pkl            # Document metadata
-│   └── metadata_v2.json         # Index metadata & update tracking
+│   ├── metadata.json            # Index metadata & update tracking
+│   ├── sitemap.xml              # Cached sitemap
+│   └── chunks.json              # Document chunks
 │
 ├── tests/                       # Test suite (see tests/README.md)
 │   ├── README.md                # Test documentation
 │   ├── test_comparison.py       # Primary regression test (REQUIRED)
-│   ├── test_consul_stale_reads.py
-│   ├── test_debug_chunks.py
-│   ├── test_hashicorp_search.py
-│   ├── test_pdf_search.py
-│   └── test_selenium_download.py
+│   ├── test_debug_chunks.py     # Debug tool for search results
+│   └── test_validated_designs.py
 │
 ├── ivan-extension/              # Chrome extension
 │   ├── manifest.json
@@ -94,6 +93,7 @@ Ivan/
 │   └── icon*.png
 │
 ├── venv/                        # Python virtual environment (3.12.0)
+├── deprecated/                  # Deprecated code (old PDF search, etc.)
 └── docs/                        # Documentation and images
 ```
 
@@ -109,12 +109,11 @@ Ivan/
 ### AI/ML Features
 - **sentence-transformers** - Semantic search embeddings
 - **faiss-cpu** - Vector similarity search
-- **pypdf** - PDF text extraction
 - **duckduckgo-search** - Web search integration
 
-### Automation
-- **selenium** - Browser automation (PDF downloads)
-- **beautifulsoup4** - HTML parsing
+### Web Scraping
+- **beautifulsoup4** - HTML parsing and content extraction
+- **requests** - HTTP client for web crawling
 
 ### Optional
 - **open-webui** - Web UI (requires Python 3.11-3.12)
@@ -282,7 +281,7 @@ python tests/test_comparison.py
 
 **Expected output**: `V2 (LangChain): ✅ PASS`
 
-This test validates the HashiCorp PDF search implementation against known correct answers. It ensures:
+This test validates the HashiCorp web documentation search implementation against known correct answers. It ensures:
 - Semantic search finds the correct documents and sections
 - Chunking strategy preserves important information
 - Results include enough context for the LLM to answer accurately
@@ -313,16 +312,13 @@ done
 
 Located in `tests/` directory:
 - `test_comparison.py` - **Primary regression test** for search quality (REQUIRED)
-- `test_consul_stale_reads.py` - Specific test for Consul stale reads query
 - `test_debug_chunks.py` - Debug tool to inspect chunk content
-- `test_hashicorp_search.py` - HashiCorp documentation search tests
-- `test_pdf_search.py` - PDF semantic search tests
-- `test_selenium_download.py` - PDF download automation tests
+- `test_validated_designs.py` - Web crawler validation tests
 
 ### When to Run Regression Tests
 
 Run `tests/test_comparison.py` before committing changes to:
-- `hashicorp_pdf_search.py` - Search implementation
+- `hashicorp_web_search.py` - Web crawler search implementation
 - `tools.py` - Tool definitions (especially `search_hashicorp_docs`)
 - Embedding models or chunking strategies
 - FAISS index configuration

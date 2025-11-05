@@ -11,11 +11,11 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
-from hashicorp_web_search import initialize_web_search
+from hashicorp_doc_search import initialize_doc_search
 
 def main():
     print("="*80)
-    print("Building HashiCorp Web Documentation Search Index")
+    print("Building HashiCorp Documentation Search Index")
     print("="*80)
     print()
     print("This will:")
@@ -40,7 +40,7 @@ def main():
 
     try:
         # Force rebuild to see all steps
-        initialize_web_search(force_update=True)
+        initialize_doc_search(force_update=True)
         print()
         print("="*80)
         print("✓ SUCCESS! Index built and saved.")

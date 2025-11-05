@@ -1,6 +1,6 @@
 # Ivan Test Suite
 
-This directory contains tests for the Ivan AI assistant, particularly focused on HashiCorp documentation search quality.
+This directory contains tests for the Ivan AI assistant, focused on validating HashiCorp documentation search quality.
 
 ## Test Files
 
@@ -10,7 +10,7 @@ This directory contains tests for the Ivan AI assistant, particularly focused on
 **Purpose**: Comprehensive regression test suite for HashiCorp documentation search quality.
 
 **What it tests**:
-- Tests the LangChain-based FAISS implementation
+- Tests the web crawler search implementation (hashicorp_web_search.py)
 - Validates search accuracy against known correct answers
 - Ensures chunking and retrieval strategies work correctly
 - Multiple test cases covering different products and query types
@@ -44,10 +44,16 @@ python tests/test_comparison.py
 
 ---
 
-### Debug & Development Tests
+### Debug & Development Tools
 
 #### `test_debug_chunks.py`
 **Purpose**: Debug tool to inspect full chunk content and understand retrieval behavior.
+
+**What it does**:
+- Runs a search query
+- Shows full content of retrieved chunks (not just preview)
+- Helps diagnose search quality issues
+- Useful when search isn't returning expected results
 
 **Usage**:
 ```bash
@@ -55,47 +61,35 @@ source venv/bin/activate
 python tests/test_debug_chunks.py
 ```
 
-Shows full chunk content for top 10 results to help diagnose search quality issues.
+Edit the file to change the query you want to debug.
 
-#### `test_consul_stale_reads.py`
-**Purpose**: Focused test for the specific Consul stale reads regression case.
+#### `test_validated_designs.py`
+**Purpose**: Test web crawler's ability to discover validated-designs pages.
 
-**Usage**:
-```bash
-source venv/bin/activate
-python tests/test_consul_stale_reads.py
-```
-
-#### `test_hashicorp_search.py`
-**Purpose**: Legacy test for HashiCorp search functionality.
+**What it tests**:
+- Sitemap parsing
+- Validated-designs URL discovery
+- robots.txt override for validated-designs
+- Product categorization
 
 **Usage**:
 ```bash
 source venv/bin/activate
-python tests/test_hashicorp_search.py
+python tests/test_validated_designs.py
 ```
 
-#### `test_pdf_search.py`
-**Purpose**: Test PDF semantic search functionality.
-
-**Usage**:
-```bash
-source venv/bin/activate
-python tests/test_pdf_search.py
-```
-
-#### `test_selenium_download.py`
-**Purpose**: Test PDF download automation using Selenium.
-
-**Usage**:
-```bash
-source venv/bin/activate
-python tests/test_selenium_download.py
-```
+---
 
 ## Running All Tests
 
-To run all tests:
+To run the main regression test:
+
+```bash
+source venv/bin/activate
+python tests/test_comparison.py
+```
+
+To run all tests (including debug/dev tools):
 
 ```bash
 source venv/bin/activate
@@ -107,28 +101,64 @@ done
 
 ## Adding New Regression Tests
 
-When adding features or fixing bugs in the search implementation:
+When you discover a search quality issue or want to validate specific behavior:
 
-1. Create a test case with a specific query and expected answer
-2. Add it to `test_comparison.py` or create a new test file
-3. Document the expected behavior
-4. Run the test to verify it passes
-5. Add it to this README
+1. Add a new test case to `TEST_CASES` in `test_comparison.py`:
 
-## Known Issues
+```python
+{
+    "name": "Your Test Name",
+    "query": "your search query",
+    "product": "consul",  # or "vault", "terraform", etc.
+    "source": "Documentation source",
+    "expected": "What the answer should be",
+    "must_contain": [
+        ("critical", "keyword"),  # Both must be present
+    ],
+    "should_contain": [
+        "important",  # Should be present
+        "keyword",
+    ],
+    "must_not_contain": [
+        "wrong info",  # Should NOT be present
+    ],
+}
+```
 
-- `test_selenium_download.py` may fail if Chrome/ChromeDriver versions don't match
-- Tests require the PDF index to be built (happens automatically on first run)
-- Initial index build can take 2-3 minutes
+2. Run the test to verify it works:
+```bash
+python tests/test_comparison.py
+```
+
+3. Commit the updated test case
+
+## Test Requirements
+
+- Tests require the search index to be built (happens automatically on first run)
+- Initial index build can take a few minutes
+- Subsequent runs use cached index (much faster)
+
+## When to Run Tests
+
+**Always run regression tests** (`test_comparison.py`) before committing changes to:
+- `hashicorp_web_search.py` - Web crawler search implementation
+- `tools.py` - Tool definitions (especially search-related)
+- Embedding models or chunking strategies
+- FAISS index configuration
+- Any RAG-related code
 
 ## CI/CD Integration (Future)
 
-These tests should be run in CI/CD before deploying changes to:
-- `hashicorp_pdf_search.py`
-- `tools.py` (search-related functions)
-- Embedding models or chunking strategies
-
-Recommended workflow:
+These tests should be run in CI/CD:
 1. Run regression tests on every PR
 2. Require 100% pass rate for search-related changes
 3. Update tests when intentionally changing search behavior
+4. Block merge if tests fail
+
+## Troubleshooting
+
+**Index not found**: Run Ivan once to build the index, or run `python tests/test_comparison.py` to trigger index build.
+
+**Tests failing**: Use `test_debug_chunks.py` to inspect what content is being returned and why it might not match expectations.
+
+**Slow tests**: First run is slow (building index), subsequent runs are fast (using cache).

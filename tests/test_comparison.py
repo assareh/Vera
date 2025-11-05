@@ -165,12 +165,11 @@ def main():
     print("="*80)
     print(f"\nRunning {len(TEST_CASES)} test cases...")
 
-    # Initialize search
+    # Initialize search (using web crawler)
     try:
-        from hashicorp_pdf_search import initialize_pdf_search, search_pdfs
-        print("\nInitializing search index...")
-        initialize_pdf_search()
-        search_func = search_pdfs
+        from hashicorp_doc_search import search_docs
+        print("\nUsing doc crawler search (hashicorp_doc_search)...")
+        search_func = search_docs
     except Exception as e:
         print(f"\n❌ Failed to initialize search: {e}")
         return 1

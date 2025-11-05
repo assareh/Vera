@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Debug script to see full chunk content for Consul stale reads query."""
+"""Debug script to see full chunk content for search queries (using doc crawler)."""
 import logging
 import sys
 from pathlib import Path
@@ -7,20 +7,20 @@ from pathlib import Path
 # Add parent directory to path to import modules from project root
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hashicorp_pdf_search import get_pdf_search_index
+from hashicorp_doc_search import get_doc_search_index
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
 
 def main():
     """Show full chunk content for debugging."""
-    print("Loading index...")
-    index = get_pdf_search_index()
+    print("Loading doc search index...")
+    index = get_doc_search_index()
 
     if index.vectorstore is None:
         print("Index not loaded, initializing...")
-        from hashicorp_pdf_search import initialize_pdf_search
-        initialize_pdf_search()
+        from hashicorp_doc_search import initialize_doc_search
+        initialize_doc_search()
         print("Index initialized.\n")
 
     query = "what's the consul default for stale reads"
@@ -32,7 +32,7 @@ def main():
     # Display full content of top results
     for idx, result in enumerate(results, 1):
         print("=" * 80)
-        print(f"Result {idx}: {result['document']}")
+        print(f"Result {idx}: [{result['product'].upper()}] {result.get('source', 'web')}")
         print(f"Score: {result['score']:.3f}")
         print(f"URL: {result['url']}")
         print("-" * 80)

@@ -5,7 +5,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hashicorp_web_search import HashiCorpWebSearchIndex
+from hashicorp_doc_search import HashiCorpDocSearchIndex
 import logging
 
 # Configure logging
@@ -20,7 +20,7 @@ def test_validated_designs_discovery():
     print("Testing Validated-Designs Discovery")
     print("="*80 + "\n")
 
-    index = HashiCorpWebSearchIndex(
+    index = HashiCorpDocSearchIndex(
         cache_dir="./test_validated_designs",
         max_pages=None,  # Don't limit for this test
         rate_limit_delay=0.2

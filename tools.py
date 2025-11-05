@@ -9,7 +9,7 @@ from pydantic.v1 import BaseModel, Field
 from duckduckgo_search import DDGS
 import ollama
 import config
-from hashicorp_web_search import search_web_docs
+from hashicorp_doc_search import search_docs
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -318,10 +318,15 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
     # Limit results
     max_results = min(max(1, max_results), 10)
 
-    # Search using the web crawler
+    # Search using the doc crawler
     try:
-        results = search_web_docs(query, top_k=max_results, product=product)
+        results = search_docs(query, top_k=max_results, product=product)
         logger.info(f"[HASHICORP_SEARCH] Search completed")
+        logger.debug(f"[HASHICORP_SEARCH] === TOOL RETURNING TO LLM ===")
+        logger.debug(f"[HASHICORP_SEARCH] Result type: {type(results)}")
+        logger.debug(f"[HASHICORP_SEARCH] Result length: {len(results) if isinstance(results, str) else 'N/A'} chars")
+        logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {results[:500] if isinstance(results, str) else str(results)[:500]}")
+        logger.debug(f"[HASHICORP_SEARCH] === END TOOL RETURN ===")
         return results
     except Exception as e:
         logger.error(f"[HASHICORP_SEARCH] Search failed: {e}")
