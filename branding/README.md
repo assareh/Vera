@@ -1,29 +1,16 @@
 # HashiCorp Branding Assets
 
-This directory contains the HashiCorp branding assets used to customize the Open Web UI interface.
+This directory contains the HashiCorp branding assets used to customize the Open Web UI interface for Ivan.
 
 ## Contents
 
 ### custom.css
 
-Complete CSS theme file that applies HashiCorp branding:
-- **Primary color**: HashiCorp Purple (#7B42BC - Terraform brand color)
-- **Light purple**: #AC72F0 (for dark mode)
-- **Surface colors**: #f9f2ff, #f4ecff
-- **Border color**: #ebdbfc
-
-The theme includes:
-- Purple sidebar with light purple backgrounds
-- Purple buttons and hover states
-- Purple-themed links, inputs, and form elements
-- Custom scrollbars with purple accents
-- Purple message bubbles and containers
-- Dark mode support (automatically adjusts colors)
-- Accessibility features (reduced motion, proper contrast)
+Minimal custom CSS file for future styling if needed. Currently contains no color customizations - all branding is done through images/icons and text replacements.
 
 ### favicons/
 
-HashiCorp logo in various sizes for favicons and app icons:
+HashiCorp logo in various sizes for favicons, app icons, and splash screens:
 
 | File | Size | Usage |
 |------|------|-------|
@@ -33,6 +20,9 @@ HashiCorp logo in various sizes for favicons and app icons:
 | `apple-touch-icon.png` | 180×180 | iOS home screen |
 | `web-app-manifest-192x192.png` | 192×192 | PWA icon (small) |
 | `web-app-manifest-512x512.png` | 512×512 | PWA icon (large) |
+| `splash.png` | 256×256 | Loading screen (light mode) |
+| `splash-dark.png` | 256×256 | Loading screen (dark mode) |
+| `hashicorp-logo-notext.png` | Source | HashiCorp logo without text |
 
 ## Applying Branding
 
@@ -42,22 +32,24 @@ From the project root, run:
 ./apply_branding.sh
 ```
 
-This copies all assets to the Open Web UI installation in your venv.
+This script:
+- Copies all favicon/logo assets to the Open Web UI installation
+- Replaces all "Open WebUI" text with "Ivan" in HTML and JavaScript files
+- Updates the backend WEBUI_NAME configuration
+- Applies minimal custom CSS
+
+**Note**: Run this script whenever you reinstall or upgrade Open Web UI to reapply the branding.
+
+## What Gets Branded
+
+The branding script customizes:
+1. **Page title**: "Open WebUI" → "Ivan"
+2. **All UI text**: "Open WebUI" → "Ivan" throughout the interface
+3. **Favicon**: HashiCorp hexagon logo
+4. **Splash screen**: HashiCorp logo (no text) during page loads
+5. **PWA icons**: HashiCorp branding for installed web app
 
 ## Customization
-
-### Changing Colors
-
-Edit `custom.css` and modify the CSS variables in the `:root` section:
-
-```css
-:root {
-  --hashicorp-purple: #7B42BC;        /* Primary purple */
-  --hashicorp-purple-light: #AC72F0;  /* Light purple for dark mode */
-  --hashicorp-surface: #f9f2ff;       /* Light background */
-  /* ... other colors */
-}
-```
 
 ### Custom Logo
 
@@ -66,45 +58,30 @@ Replace the files in `favicons/` with your own:
 2. Generate PNG versions at different sizes
 3. Run `./apply_branding.sh` to apply
 
-### Logo Generation from SVG
+### Logo Generation from Image
 
-If you have an SVG logo, you can generate PNGs using macOS `sips`:
+If you have a source logo image, you can generate the required sizes using macOS `sips`:
 
 ```bash
-sips -z 128 128 logo.svg --out favicon.png
-sips -z 96 96 logo.svg --out favicon-96x96.png
-sips -z 180 180 logo.svg --out apple-touch-icon.png
-sips -z 192 192 logo.svg --out web-app-manifest-192x192.png
-sips -z 512 512 logo.svg --out web-app-manifest-512x512.png
+# Standard favicons
+sips -z 128 128 logo.png --out favicon.png
+sips -z 96 96 logo.png --out favicon-96x96.png
+sips -z 180 180 logo.png --out apple-touch-icon.png
+
+# PWA icons
+sips -z 192 192 logo.png --out web-app-manifest-192x192.png
+sips -z 512 512 logo.png --out web-app-manifest-512x512.png
+
+# Splash screens
+sips -z 256 256 logo.png --out splash.png
+sips -z 256 256 logo.png --out splash-dark.png
 ```
-
-## Brand Colors Reference
-
-From HashiCorp's Helios Design System:
-
-### Product Colors
-- **HashiCorp**: #000000 (Black)
-- **Terraform**: #7B42BC (Purple) ← Used as primary
-- **Vault**: #FFCF25 (Yellow)
-- **Boundary**: #F24C53 (Red)
-- **Consul**: #E03875 (Pink)
-- **Nomad**: #06D092 (Green)
-- **Packer**: #02A8EF (Blue)
-- **Vagrant**: #1868F2 (Blue)
-
-### Purple Scale
-- **Purple-500**: #42215b (Dark)
-- **Purple-400**: #7b00db
-- **Purple-300**: #911ced
-- **Purple-200**: #a737ff (Light)
-- **Purple-100**: #ead2fe (Very light)
-- **Purple-50**: #f9f2ff (Surface)
 
 ## Resources
 
 - [HashiCorp Brand Guidelines](https://brand.hashicorp.com/)
 - [Helios Design System](https://helios.hashicorp.design/)
-- [HashiCorp Brand Colors](https://helios.hashicorp.design/foundations/colors)
+- [HashiCorp Logos](https://www.hashicorp.com/brand)
 
 ## License Note
 

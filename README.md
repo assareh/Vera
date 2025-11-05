@@ -137,9 +137,9 @@ Ivan includes HashiCorp branding for the Open Web UI interface. After installing
 ```
 
 This applies:
-- **HashiCorp purple theme** (#7B42BC) throughout the UI
-- **HashiCorp favicon** and logos
-- **Consistent branding** with HashiCorp's Helios Design System
+- **HashiCorp logos and favicons** throughout the UI
+- **"Ivan" name** replaces all "Open WebUI" text
+- **Splash screen** with HashiCorp logo during page loads
 
 The branding assets are stored in the `branding/` directory and can be customized as needed.
 
