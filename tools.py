@@ -4,8 +4,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
-from langchain.tools import Tool
-from langchain.pydantic_v1 import BaseModel, Field
+from langchain_core.tools import Tool
+from pydantic.v1 import BaseModel, Field
 from duckduckgo_search import DDGS
 import ollama
 import config

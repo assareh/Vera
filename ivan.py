@@ -98,12 +98,20 @@ def call_ollama_with_tools(messages: list, tools: list, temperature: float = 0.0
     # Convert tools to Ollama format
     ollama_tools = []
     for tool in tools:
+        # Get schema using the appropriate method (pydantic v1 vs v2)
+        if hasattr(tool.args_schema, "model_json_schema"):
+            schema = tool.args_schema.model_json_schema()
+        elif hasattr(tool.args_schema, "schema"):
+            schema = tool.args_schema.schema()
+        else:
+            schema = {}
+
         tool_def = {
             "type": "function",
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.args_schema.model_json_schema() if hasattr(tool.args_schema, "model_json_schema") else {}
+                "parameters": schema
             }
         }
         ollama_tools.append(tool_def)
@@ -131,12 +139,20 @@ def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0
     # Convert tools to OpenAI format
     openai_tools = []
     for tool in tools:
+        # Get schema using the appropriate method (pydantic v1 vs v2)
+        if hasattr(tool.args_schema, "model_json_schema"):
+            schema = tool.args_schema.model_json_schema()
+        elif hasattr(tool.args_schema, "schema"):
+            schema = tool.args_schema.schema()
+        else:
+            schema = {}
+
         tool_def = {
             "type": "function",
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.args_schema.model_json_schema() if hasattr(tool.args_schema, "model_json_schema") else {}
+                "parameters": schema
             }
         }
         openai_tools.append(tool_def)
