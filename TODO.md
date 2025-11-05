@@ -14,77 +14,134 @@ Last updated: 2025-11-05
 - [x] Renamed hashicorp_web_search → hashicorp_doc_search for accuracy
 - [x] Updated all imports and references across codebase
 - [x] Deprecated old PDF search files to `deprecated/` directory
+- [x] **Fixed duplicate URL bug** - Same URL appearing multiple times in search results
+  - Added deduplication logic to keep highest-scoring chunk per URL
+  - Applies to both hybrid and semantic-only search paths
 
 ### In Progress 🔄
-- [ ] **Rewrite regression tests** (test_comparison.py)
-  - Current tests expect PDF content that doesn't exist in web-crawled docs
-  - Need to identify what content is actually available in the web index
-  - Update test cases with realistic expectations
-  - Add new test cases for search quality validation
+- [ ] **Section Anchors Implementation** (Quick Win - Task #1)
+  - Modify _extract_main_content to capture heading IDs
+  - Store anchor in chunk metadata
+  - Update search results to include anchors in URLs
+  - Target: Make citations actionable for SE demos/customer conversations
 
 ### Known Issues 🐛
 
 #### 1. Regression Test Failures (0/2 passing)
 
+**Note**: Tests are based on old expectations. Deprioritized in favor of search quality improvements.
+
 **Consul Stale Reads Test**
 - Query: "what's the consul default for stale reads"
 - Expected: "max_stale value to 10 years" from Consul Adoption Guide
-- Problem: Web crawler may not have this specific content
-- Need to: Verify if this content exists, or update test expectations
+- Status: Answer IS in results (rank #5), just not top result
+- Action: Will be addressed by section-aware chunking + enhanced metadata
 
 **Vault Disk Throughput Test**
 - Query: "what disk throughput is needed to run vault"
 - Expected: "75+ MB/s" from Validated Designs
-- Problem: Search returns general performance tuning docs, not specific requirements
-- Need to: Check if validated-designs content is properly indexed
+- Status: Returns general performance docs instead of specific numbers
+- Action: May be improved by validated-designs boosting + metadata
 
-#### 2. Search Quality
+#### 2. Search Quality Gaps
 
-**Current Performance**
-- Hybrid search (50% BM25, 50% semantic) working
-- Score distribution good (1.00, 0.909, 0.833, 0.769, 0.714)
-- No score compression issues
+**Missing Features** (being addressed - see Upcoming Tasks):
+- No section anchors (can't cite specific sections)
+- Fixed-size chunking (misses section boundaries)
+- Limited metadata (no version, doc_type, hcp flag)
+- No live search fallback for freshness
 
-**Areas for Improvement**
-- May need to adjust BM25/semantic weighting for different query types
-- Consider adding product-specific boosting
-- Evaluate chunk size (currently 1000 chars, 200 overlap)
+**Current Strengths**:
+- ✅ Hybrid search (50% BM25, 50% semantic) working well
+- ✅ Good score distribution (1.00, 0.909, 0.833, 0.769, 0.714)
+- ✅ No score compression issues
+- ✅ URL deduplication working
+- ✅ Product filtering working
 
 ### Upcoming Tasks 📋
 
-#### High Priority
-1. **Rewrite regression tests**
+Based on expert guidance for hybrid RAG architecture (see notes below).
+
+#### High Priority - Search Quality Improvements
+
+1. **Section Anchors for Precise Citations** 🎯 **[QUICK WIN]**
+   - Extract and preserve H2/H3 section anchors during crawling
+   - Store anchor IDs in chunk metadata
+   - Return URLs with anchors: `developer.hashicorp.com/vault/docs/auth/approle#pull-secret-id`
+   - **Impact**: Makes answers actionable for SE demos/POCs/customer emails
+   - **Effort**: Low (modify _extract_main_content to capture heading IDs)
+
+2. **Section-Aware Chunking Strategy**
+   - Chunk by H2/H3 boundaries instead of fixed 1000-char splits
+   - Keep heading text as context for each chunk
+   - Preserve code blocks separately
+   - Add overlap between sections intelligently
+   - **Impact**: Better relevance, enables anchor links
+   - **Effort**: Medium (rewrite text splitting logic)
+
+3. **Enhanced Metadata Schema**
+   - Extract version info from URLs or page content
+   - Classify doc_type: `howto | concept | api | release-notes | tutorial`
+   - Add `hcp` boolean flag (cloud.hashicorp vs developer.hashicorp)
+   - Store section hierarchy (e.g., "auth/approle")
+   - **Impact**: Better filtering, more precise answers
+   - **Effort**: Medium (update crawler + metadata extraction)
+
+4. **Confidence-Based Live Search Fallback**
+   - Integrate Ollama Web Search as secondary retriever
+   - Detect low-confidence scenarios:
+     - Top result score < threshold (e.g., 0.6)
+     - Empty result set
+     - Query contains "latest", "new", "GA", "RC", version numbers
+   - Route to live search when confidence low
+   - Cache and optionally index live search results
+   - **Impact**: Freshness + edge case coverage
+   - **Effort**: High (new integration + routing logic)
+
+#### Medium Priority - Extended Coverage
+
+5. **HCP Changelog Indexing**
+   - Add crawler for `cloud.hashicorp.com/changelog`
+   - Tag with doc_type: "release-notes" and hcp: true
+   - Update daily (managed offerings move on own cadence)
+   - **Impact**: Coverage of HCP-specific changes
+   - **Effort**: Low (similar to existing crawler)
+
+6. **GitHub Releases Integration**
+   - Add GitHub API integration for each product
+   - Index release notes from GitHub (markdown format)
+   - Tag with version + release date
+   - Update daily
+   - **Impact**: Covers pre-docs.hashicorp.com content
+   - **Effort**: Medium (GitHub API integration)
+
+7. **Automated Refresh Cadence**
+   - Daily: release notes + HCP changelog + GitHub releases
+   - Weekly: all product docs
+   - On-demand: when query misses or confidence low
+   - Add CLI flags: `--refresh=daily|weekly|all`
+   - **Impact**: Keeps index fresh
+   - **Effort**: Low (scheduling + incremental update logic)
+
+#### Lower Priority - Testing & Documentation
+
+8. **Rewrite regression tests**
    - Create new test cases based on actual web index content
    - Test both keyword-heavy and semantic queries
-   - Add tests for product filtering
+   - Add tests for product filtering and metadata
    - Ensure tests validate search quality, not just presence of content
+   - **Note**: Deprioritized vs search quality improvements
 
-2. **Validate web index completeness**
-   - Verify validated-designs pages are properly indexed
-   - Check if important technical content is present
-   - Review chunking strategy for technical documents
-
-3. **Search quality tuning**
-   - Analyze debug logs to understand search behavior
-   - Consider query-specific retrieval strategies
-   - Test with real user queries
-
-#### Medium Priority
-4. **Documentation updates**
+9. **Documentation updates**
    - Update README.md with hybrid search details
    - Document search algorithm and scoring
    - Add troubleshooting guide for common search issues
+   - Document the hybrid RAG architecture
 
-5. **Testing infrastructure**
-   - Add more comprehensive test suite
-   - Create test queries covering different use cases
-   - Add performance benchmarks
-
-#### Low Priority
-6. **Optimization**
-   - Consider caching BM25 retriever initialization
-   - Evaluate if chunk size needs adjustment
-   - Profile search performance
+10. **Performance optimization**
+    - Consider caching BM25 retriever initialization
+    - Profile search performance
+    - Optimize embedding generation (batching)
 
 ### Notes
 
@@ -153,3 +210,88 @@ python tests/test_comparison.py
 - Main search implementation: `hashicorp_doc_search.py`
 - Test suite: `tests/test_comparison.py`
 - Documentation: `tests/README.md`, `CLAUDE.md`
+
+---
+
+## Expert Guidance - Hybrid RAG Architecture
+
+**Date**: 2025-11-05
+**Context**: Recommendations for SE assistant using both curated index + live web search
+
+### When to Use Each Approach
+
+**Use Live Web Search (Ollama Web Search) when:**
+- Freshness needed: new releases, breaking changes, HCP changelog, GitHub releases
+- Cross-site answers spanning docs + blog + GitHub issues/PRs
+- Edge cases or long-tail queries not in index
+
+**Use Curated Index when:**
+- Verifiability & stable references for demos/POCs/SOWs
+- Low latency + consistency for common questions
+- Structured filters (product/version/cloud) that search alone won't provide
+
+### What to Index
+
+**Current (✅ Done)**:
+- Product docs at developer.hashicorp.com (Terraform, Vault, Consul, Nomad, Boundary, Packer, Vagrant, HCP)
+- API refs
+- Sitemap-seeded crawler
+
+**To Add**:
+- Release notes pages for each product
+- HCP changelog (cloud.hashicorp.com/changelog)
+- GitHub releases (via API)
+
+### Recommended Metadata Schema
+
+```json
+{
+  "product": "vault",
+  "topic": "auth/approle",
+  "doc_type": "howto|concept|api|release-notes",
+  "version": "1.21",
+  "hcp": false,
+  "url": "https://developer.hashicorp.com/vault/docs/auth/approle#pull-secret-id",
+  "anchor": "pull-secret-id",
+  "updated_at": "2025-10-22"
+}
+```
+
+### Answer Flow Strategy
+
+1. **Route each query**:
+   - Version/release queries → index first, then live search for post-crawl content
+   - Broad/comparative queries → index first, optionally enrich with live search
+
+2. **Always cite**:
+   - Specific section URLs from index
+   - Include live search citations if used
+
+3. **Confidence threshold**:
+   - If index confidence < threshold → fall back to Ollama Web Search
+   - Cache and optionally add results back to index
+
+### Refresh Cadence
+
+- **Daily**: release notes + HCP changelog + GitHub releases
+- **Weekly**: all product docs
+- **On-demand**: when query misses or low confidence
+
+### Why This Hybrid Approach?
+
+**Why not web search alone?**
+- Inconsistent ranking across queries
+- Occasional stale snippets
+- Slower responses
+- SE workflow needs repeatable, citable answers
+
+**Why not index everything?**
+- Diminishing returns and more noise
+- Better with high-signal official sources + live search escape hatch
+
+### Implementation Notes
+
+- Treat Ollama Web Search as secondary retriever
+- Use when index confidence < threshold or query asks for "latest"
+- Cache live search results + sources
+- Validate and add to index after light validation pass

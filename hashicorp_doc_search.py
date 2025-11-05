@@ -897,6 +897,18 @@ class HashiCorpDocSearchIndex:
             # Re-sort by boosted scores (validated-designs should rank slightly higher)
             results.sort(key=lambda x: x["score"], reverse=True)
 
+            # Deduplicate by URL (keep highest-scoring chunk per URL)
+            seen_urls = set()
+            deduplicated_results = []
+            for r in results:
+                url = r["url"]
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    deduplicated_results.append(r)
+            results = deduplicated_results
+
+            logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} unique URLs")
+
             # Limit to top_k after boosting and re-ranking
             results = results[:top_k]
 
@@ -924,7 +936,7 @@ class HashiCorpDocSearchIndex:
 
             # Format results
             results = []
-            for doc, score in docs_and_scores[:top_k]:
+            for doc, score in docs_and_scores:
                 # Convert L2 distance to similarity score
                 similarity = 1.0 / (1.0 + score)
 
@@ -936,6 +948,18 @@ class HashiCorpDocSearchIndex:
                     "score": float(similarity),
                     "distance": float(score)
                 })
+
+            # Deduplicate by URL (keep highest-scoring chunk per URL)
+            seen_urls = set()
+            deduplicated_results = []
+            for r in results:
+                url = r["url"]
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    deduplicated_results.append(r)
+            results = deduplicated_results[:top_k]
+
+            logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} unique URLs")
 
         logger.info(f"[DOC_SEARCH] Found {len(results)} results for: {query}")
         logger.debug(f"[DOC_SEARCH] === FINAL RESULTS ({len(results)} total) ===")
