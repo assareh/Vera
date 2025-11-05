@@ -1,0 +1,356 @@
+/**
+ * HashiCorp Branded Theme for Open WebUI
+ *
+ * Official HashiCorp Brand Colors:
+ * - Primary Purple: #7B42BC (Terraform)
+ * - Purple on Dark: #AC72F0
+ * - Black: #000000
+ * - White: #FFFFFF
+ * - Surface: #f4ecff
+ * - Border: #ebdbfc
+ *
+ * Helios Design System Colors:
+ * - Purple-500: #42215b
+ * - Purple-400: #7b00db
+ * - Purple-300: #911ced
+ * - Purple-200: #a737ff
+ * - Purple-100: #ead2fe
+ * - Purple-50: #f9f2ff
+ */
+
+/* ===== CSS VARIABLES / COLOR TOKENS ===== */
+:root {
+  /* HashiCorp Primary Colors */
+  --hashicorp-purple: #7B42BC;
+  --hashicorp-purple-light: #AC72F0;
+  --hashicorp-purple-dark: #42215b;
+  --hashicorp-black: #000000;
+  --hashicorp-white: #FFFFFF;
+
+  /* Surface & Background Colors */
+  --hashicorp-surface: #f9f2ff;
+  --hashicorp-surface-light: #fafafa;
+  --hashicorp-surface-purple: #f4ecff;
+  --hashicorp-border: #ebdbfc;
+
+  /* Purple Scale */
+  --purple-50: #f9f2ff;
+  --purple-100: #ead2fe;
+  --purple-200: #a737ff;
+  --purple-300: #911ced;
+  --purple-400: #7b00db;
+  --purple-500: #42215b;
+
+  /* Neutral Scale */
+  --neutral-700: #0c0c0e;
+  --neutral-600: #3b3d45;
+  --neutral-500: #656a76;
+  --neutral-400: #8c909c;
+  --neutral-300: #c2c5cb;
+  --neutral-200: #dedfe3;
+  --neutral-100: #f1f2f3;
+  --neutral-50: #fafafa;
+
+  /* Semantic Colors */
+  --accent-color: var(--hashicorp-purple);
+  --accent-hover: var(--hashicorp-purple-dark);
+  --text-primary: var(--neutral-700);
+  --text-secondary: var(--neutral-600);
+}
+
+/* ===== GLOBAL STYLES ===== */
+
+/* Primary accent color override */
+.bg-purple-600,
+.bg-blue-600,
+[class*="bg-gradient-to"] {
+  background: var(--hashicorp-purple) !important;
+}
+
+.hover\:bg-purple-700:hover,
+.hover\:bg-blue-700:hover {
+  background: var(--hashicorp-purple-dark) !important;
+}
+
+.text-purple-600,
+.text-blue-600 {
+  color: var(--hashicorp-purple) !important;
+}
+
+/* ===== SIDEBAR ===== */
+#sidebar,
+aside,
+[class*="sidebar"] {
+  background-color: var(--hashicorp-surface) !important;
+  border-right: 1px solid var(--hashicorp-border) !important;
+}
+
+/* Sidebar hover states */
+#sidebar button:hover,
+aside button:hover {
+  background-color: var(--hashicorp-surface-purple) !important;
+}
+
+/* Sidebar selected/active items */
+#sidebar .bg-gray-200,
+#sidebar .bg-gray-100,
+aside [class*="bg-gray"] {
+  background-color: var(--hashicorp-surface-purple) !important;
+  border-left: 3px solid var(--hashicorp-purple) !important;
+}
+
+/* ===== BUTTONS ===== */
+
+/* Primary buttons (Send, Submit, etc.) */
+button[type="submit"],
+#send-message-button,
+button.bg-black,
+button.bg-gray-900,
+button[class*="bg-purple"],
+button[class*="bg-blue"] {
+  background-color: var(--hashicorp-purple) !important;
+  color: var(--hashicorp-white) !important;
+  border: none !important;
+  transition: background-color 0.2s ease !important;
+}
+
+button[type="submit"]:hover,
+#send-message-button:hover,
+button.bg-black:hover,
+button.bg-gray-900:hover,
+button[class*="bg-purple"]:hover,
+button[class*="bg-blue"]:hover {
+  background-color: var(--hashicorp-purple-dark) !important;
+}
+
+/* Secondary buttons */
+button.border,
+button[class*="border-gray"] {
+  border-color: var(--hashicorp-border) !important;
+  color: var(--hashicorp-purple) !important;
+}
+
+button.border:hover,
+button[class*="border-gray"]:hover {
+  background-color: var(--hashicorp-surface-purple) !important;
+  border-color: var(--hashicorp-purple) !important;
+}
+
+/* ===== LINKS ===== */
+a {
+  color: var(--hashicorp-purple) !important;
+}
+
+a:hover {
+  color: var(--hashicorp-purple-dark) !important;
+  text-decoration: underline !important;
+}
+
+/* ===== INPUTS & FORMS ===== */
+
+/* Text inputs, textareas */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+textarea,
+.input {
+  border-color: var(--hashicorp-border) !important;
+  transition: border-color 0.2s ease !important;
+}
+
+input:focus,
+textarea:focus {
+  border-color: var(--hashicorp-purple) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(123, 66, 188, 0.1) !important;
+}
+
+/* ===== CARDS & CONTAINERS ===== */
+.card,
+[class*="rounded"][class*="border"],
+[class*="shadow"] {
+  border-color: var(--hashicorp-border) !important;
+}
+
+/* ===== MESSAGE BUBBLES ===== */
+
+/* User messages */
+[class*="bg-gray-100"],
+.message.user {
+  background-color: var(--hashicorp-surface-purple) !important;
+  border-left: 3px solid var(--hashicorp-purple) !important;
+}
+
+/* Assistant messages */
+[class*="bg-white"].message,
+.message.assistant {
+  background-color: var(--hashicorp-surface) !important;
+}
+
+/* ===== NAVIGATION & TABS ===== */
+nav button.active,
+[role="tab"][aria-selected="true"],
+.tab-active {
+  color: var(--hashicorp-purple) !important;
+  border-bottom-color: var(--hashicorp-purple) !important;
+}
+
+nav button:hover,
+[role="tab"]:hover {
+  color: var(--hashicorp-purple-light) !important;
+}
+
+/* ===== BADGES & TAGS ===== */
+.badge,
+.tag,
+[class*="badge"],
+[class*="tag"] {
+  background-color: var(--purple-100) !important;
+  color: var(--hashicorp-purple-dark) !important;
+  border: 1px solid var(--hashicorp-border) !important;
+}
+
+/* ===== DROPDOWNS & MENUS ===== */
+.dropdown-menu,
+[role="menu"],
+select {
+  background-color: var(--hashicorp-white) !important;
+  border: 1px solid var(--hashicorp-border) !important;
+  box-shadow: 0 4px 6px rgba(123, 66, 188, 0.1) !important;
+}
+
+.dropdown-item:hover,
+[role="menuitem"]:hover {
+  background-color: var(--hashicorp-surface-purple) !important;
+}
+
+/* ===== PROGRESS BARS ===== */
+.progress-bar,
+[role="progressbar"] {
+  background-color: var(--hashicorp-purple) !important;
+}
+
+/* ===== SCROLLBARS ===== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--hashicorp-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--hashicorp-purple-light);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--hashicorp-purple);
+}
+
+/* ===== HEADER & TOP BAR ===== */
+header,
+.header,
+[class*="top-bar"] {
+  background-color: var(--hashicorp-surface) !important;
+  border-bottom: 1px solid var(--hashicorp-border) !important;
+}
+
+/* ===== MODALS & DIALOGS ===== */
+.modal,
+[role="dialog"],
+.dialog {
+  border: 1px solid var(--hashicorp-border) !important;
+}
+
+.modal-header,
+.dialog-header {
+  background-color: var(--hashicorp-surface) !important;
+  border-bottom: 1px solid var(--hashicorp-border) !important;
+}
+
+/* ===== TOOLTIPS ===== */
+.tooltip,
+[role="tooltip"] {
+  background-color: var(--hashicorp-purple-dark) !important;
+  color: var(--hashicorp-white) !important;
+}
+
+/* ===== TOGGLE SWITCHES ===== */
+input[type="checkbox"]:checked {
+  background-color: var(--hashicorp-purple) !important;
+  border-color: var(--hashicorp-purple) !important;
+}
+
+/* ===== CODE BLOCKS ===== */
+pre,
+code {
+  background-color: var(--purple-50) !important;
+  border: 1px solid var(--hashicorp-border) !important;
+}
+
+/* ===== LOADING INDICATORS ===== */
+.spinner,
+.loader,
+[class*="animate-spin"] {
+  border-top-color: var(--hashicorp-purple) !important;
+}
+
+/* ===== DIVIDERS ===== */
+hr,
+.divider {
+  border-color: var(--hashicorp-border) !important;
+}
+
+/* ===== SELECTION ===== */
+::selection {
+  background-color: var(--purple-200) !important;
+  color: var(--hashicorp-white) !important;
+}
+
+/* ===== FOCUS STATES ===== */
+*:focus-visible {
+  outline: 2px solid var(--hashicorp-purple) !important;
+  outline-offset: 2px !important;
+}
+
+/* ===== DARK MODE ADJUSTMENTS ===== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hashicorp-surface: #1a1a1a;
+    --hashicorp-surface-light: #2a2a2a;
+    --hashicorp-surface-purple: #2d1f3d;
+    --hashicorp-border: #3d2d4d;
+    --text-primary: var(--neutral-50);
+    --text-secondary: var(--neutral-200);
+  }
+
+  /* Use brighter purple on dark backgrounds */
+  .bg-purple-600,
+  .bg-blue-600,
+  button[class*="bg-purple"],
+  button[class*="bg-blue"] {
+    background: var(--hashicorp-purple-light) !important;
+  }
+
+  .text-purple-600,
+  .text-blue-600,
+  a {
+    color: var(--hashicorp-purple-light) !important;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--hashicorp-surface);
+  }
+}
+
+/* ===== ACCESSIBILITY ===== */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -81,6 +81,10 @@ cd Ivan
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Optional: Install Open Web UI and apply HashiCorp branding
+pip install open-webui
+./apply_branding.sh
 ```
 
 ### Running Ivan
@@ -123,6 +127,23 @@ export SYSTEM_PROMPT_PATH=system_prompt.md
 export NOTES_DIR=notes
 export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
 ```
+
+## HashiCorp Branding (Optional)
+
+Ivan includes HashiCorp branding for the Open Web UI interface. After installing Open Web UI, apply the branding with:
+
+```bash
+./apply_branding.sh
+```
+
+This applies:
+- **HashiCorp purple theme** (#7B42BC) throughout the UI
+- **HashiCorp favicon** and logos
+- **Consistent branding** with HashiCorp's Helios Design System
+
+The branding assets are stored in the `branding/` directory and can be customized as needed.
+
+**Note**: Run this script whenever you reinstall or upgrade Open Web UI to reapply the branding.
 
 ## Usage
 

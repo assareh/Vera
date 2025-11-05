@@ -542,11 +542,16 @@ def start_webui(port: int):
     global _webui_process
 
     try:
-        # Check if open-webui is installed
-        result = subprocess.run(["which", "open-webui"], capture_output=True, text=True)
-        if result.returncode != 0:
-            print("Warning: open-webui not found. Install with: pip install open-webui")
-            return
+        # Find open-webui executable (prefer venv, fallback to system)
+        venv_openwebui = Path(__file__).parent / "venv" / "bin" / "open-webui"
+        if venv_openwebui.exists():
+            openwebui_cmd = str(venv_openwebui)
+        else:
+            result = subprocess.run(["which", "open-webui"], capture_output=True, text=True)
+            if result.returncode != 0:
+                print("Warning: open-webui not found. Install with: pip install open-webui")
+                return
+            openwebui_cmd = "open-webui"
 
         webui_port = port + 1
         print(f"Starting Open Web UI on port {webui_port}...")
@@ -578,7 +583,7 @@ def start_webui(port: int):
 
         # Start open-webui
         _webui_process = subprocess.Popen(
-            ["open-webui", "serve", "--port", str(webui_port)],
+            [openwebui_cmd, "serve", "--port", str(webui_port)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env
