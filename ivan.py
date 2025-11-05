@@ -18,7 +18,7 @@ import click
 
 import config
 from tools import ALL_TOOLS
-from hashicorp_pdf_search import initialize_pdf_search
+from hashicorp_web_search import initialize_web_search
 
 
 app = Flask(__name__)
@@ -635,20 +635,20 @@ API: http://localhost:{port}/v1
     # Create notes directory if it doesn't exist
     Path(config.NOTES_DIR).mkdir(exist_ok=True)
 
-    # Initialize HashiCorp PDF search index in background
-    print("Initializing HashiCorp validated designs search index...")
+    # Initialize HashiCorp web documentation search index in background
+    print("Initializing HashiCorp developer documentation search index...")
     print("(This runs in the background and won't block startup)")
 
-    def init_pdf_search_background():
-        """Initialize PDF search in background thread."""
+    def init_web_search_background():
+        """Initialize web search in background thread."""
         try:
-            initialize_pdf_search()
-            print("✓ HashiCorp PDF search index ready")
+            initialize_web_search()
+            print("✓ HashiCorp developer documentation search index ready")
         except Exception as e:
-            print(f"✗ Warning: Failed to initialize PDF search: {e}")
+            print(f"✗ Warning: Failed to initialize web search: {e}")
 
-    pdf_thread = threading.Thread(target=init_pdf_search_background, daemon=True)
-    pdf_thread.start()
+    web_thread = threading.Thread(target=init_web_search_background, daemon=True)
+    web_thread.start()
 
     # Start Web UI if requested
     if not no_webui:

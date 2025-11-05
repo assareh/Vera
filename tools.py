@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from duckduckgo_search import DDGS
 import ollama
 import config
-from hashicorp_pdf_search import search_pdfs
+from hashicorp_web_search import search_web_docs
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -294,9 +294,9 @@ class HashiCorpDocsSearchInput(BaseModel):
 def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -> str:
     """Search HashiCorp product documentation.
 
-    This tool searches both HashiCorp's validated design PDFs and online documentation,
-    providing comprehensive results. Use this when users ask questions about HashiCorp
-    products like Terraform, Vault, Consul, Nomad, Packer, or Waypoint.
+    This tool searches developer.hashicorp.com including all product documentation,
+    validated designs, and technical guides. Use this when users ask questions about
+    HashiCorp products like Terraform, Vault, Consul, Nomad, Packer, or Waypoint.
 
     ⚠️  CRITICAL: When citing HashiCorp resources:
     - Use ONLY the URLs provided in the search results
@@ -309,7 +309,7 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
         max_results: Maximum number of results (default 5, max 10)
 
     Returns:
-        Formatted search results combining PDF and web sources with actual URLs
+        Formatted search results from HashiCorp developer documentation with actual URLs
     """
     logger.info(f"[HASHICORP_SEARCH] Starting search")
     logger.info(f"[HASHICORP_SEARCH] Query: {query}")
@@ -318,43 +318,14 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
     # Limit results
     max_results = min(max(1, max_results), 10)
 
-    output_sections = []
-
-    # === PART 1: Search Validated Design PDFs ===
-    logger.info("[HASHICORP_SEARCH] Searching validated design PDFs...")
+    # Search using the web crawler
     try:
-        pdf_results = search_pdfs(query, top_k=3, product=product)
-        if pdf_results and "not initialized" not in pdf_results.lower():
-            output_sections.append("=== Validated Design Documents ===\n")
-            output_sections.append(pdf_results)
-            output_sections.append("\n")
+        results = search_web_docs(query, top_k=max_results, product=product)
+        logger.info(f"[HASHICORP_SEARCH] Search completed")
+        return results
     except Exception as e:
-        logger.warning(f"[HASHICORP_SEARCH] PDF search failed: {e}")
-
-    # === PART 2: Search Online Documentation ===
-    logger.info("[HASHICORP_SEARCH] Searching online documentation...")
-
-    # Determine site restriction based on product
-    if product:
-        product_lower = product.lower().strip()
-        site = f"hashicorp.com/{product_lower}"
-        logger.info(f"[HASHICORP_SEARCH] Product-specific search: {product_lower}")
-    else:
-        site = "hashicorp.com"
-
-    # Use the unified web_search function
-    web_results = web_search(query, max_results=max_results, site=site)
-
-    # Add web results to output
-    if web_results and "failed" not in web_results.lower():
-        output_sections.append("=== Online Documentation ===\n")
-        output_sections.append(web_results)
-
-    # Return combined results
-    if output_sections:
-        return "\n".join(output_sections)
-    else:
-        return f"No HashiCorp documentation found for query: '{query}'"
+        logger.error(f"[HASHICORP_SEARCH] Search failed: {e}")
+        return f"Error searching HashiCorp documentation: {str(e)}"
 
 
 def ollama_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
