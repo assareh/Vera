@@ -100,8 +100,8 @@ class HashiCorpDocSearchIndex:
         chunk_size: int = 800,  # Default: tokens for concept/how-to docs
         chunk_overlap: int = 120,  # Default: ~15% overlap
         max_pages: Optional[int] = None,  # For testing, limit pages crawled
-        rate_limit_delay: float = 0.05,  # Delay between requests (seconds)
-        max_workers: int = 10,  # Parallel workers for fetching
+        rate_limit_delay: float = 0.1,  # Delay between requests (seconds) - increased for rate limiting
+        max_workers: int = 5,  # Parallel workers for fetching - reduced to avoid rate limits
         enable_reranking: bool = True,  # Enable cross-encoder re-ranking
         rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",  # Cross-encoder model
         rerank_top_k: int = 20,  # Number of results to re-rank
@@ -263,6 +263,11 @@ class HashiCorpDocSearchIndex:
                     url = loc.text
                     # Normalize URL (remove anchors if present)
                     url = self._normalize_url(url)
+
+                    # Skip URLs containing /partials/
+                    if '/partials/' in url:
+                        continue
+
                     parsed = urlparse(url)
                     path_parts = parsed.path.strip('/').split('/')
 
