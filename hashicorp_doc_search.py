@@ -28,6 +28,9 @@ from langchain.retrievers import EnsembleRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
+# Cross-encoder for re-ranking
+from sentence_transformers import CrossEncoder
+
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Enable debug logging
@@ -62,7 +65,10 @@ class HashiCorpDocSearchIndex:
         chunk_overlap: int = 120,  # Default: ~15% overlap
         max_pages: Optional[int] = None,  # For testing, limit pages crawled
         rate_limit_delay: float = 0.05,  # Delay between requests (seconds)
-        max_workers: int = 10  # Parallel workers for fetching
+        max_workers: int = 10,  # Parallel workers for fetching
+        enable_reranking: bool = True,  # Enable cross-encoder re-ranking
+        rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",  # Cross-encoder model
+        rerank_top_k: int = 20  # Number of results to re-rank
     ):
         """Initialize the web search index.
 
@@ -74,6 +80,10 @@ class HashiCorpDocSearchIndex:
             chunk_overlap: Overlapping tokens between chunks
             max_pages: Maximum pages to crawl (None = unlimited, for testing)
             rate_limit_delay: Delay between HTTP requests to be respectful
+            max_workers: Number of parallel workers for fetching pages
+            enable_reranking: Enable cross-encoder re-ranking (default: True)
+            rerank_model: Cross-encoder model for re-ranking
+            rerank_top_k: Number of results to retrieve for re-ranking
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
@@ -98,6 +108,11 @@ class HashiCorpDocSearchIndex:
         self.rate_limit_delay = rate_limit_delay
         self.max_workers = max_workers
 
+        # Re-ranking configuration
+        self.enable_reranking = enable_reranking
+        self.rerank_model = rerank_model
+        self.rerank_top_k = rerank_top_k
+
         # LangChain components
         self.embeddings: Optional[HuggingFaceEmbeddings] = None
         self.vectorstore: Optional[FAISS] = None
@@ -105,6 +120,7 @@ class HashiCorpDocSearchIndex:
         self.bm25_retriever: Optional[BM25Retriever] = None
         self.ensemble_retriever: Optional[EnsembleRetriever] = None
         self.chunks: Optional[List[Document]] = None  # Store chunks for BM25
+        self.cross_encoder: Optional[CrossEncoder] = None  # Cross-encoder for re-ranking
 
         # Robots.txt parser
         self.robot_parser = RobotFileParser()
@@ -1129,6 +1145,42 @@ class HashiCorpDocSearchIndex:
         logger.info("[DOC_SEARCH] " + "=" * 70)
         return all_chunks
 
+    def _rerank_results(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Re-rank search results using cross-encoder.
+
+        Args:
+            query: Search query
+            results: List of search results to re-rank
+
+        Returns:
+            Re-ranked list of results with updated scores
+        """
+        if not self.cross_encoder or not results:
+            return results
+
+        logger.debug(f"[DOC_SEARCH] Re-ranking {len(results)} results with cross-encoder...")
+
+        # Prepare query-document pairs for scoring
+        pairs = [[query, result['text']] for result in results]
+
+        # Score all pairs
+        scores = self.cross_encoder.predict(pairs)
+
+        # Update results with new scores
+        for result, score in zip(results, scores):
+            result['rerank_score'] = float(score)
+            result['original_score'] = result['score']
+            result['score'] = float(score)
+
+        # Sort by new scores (descending)
+        reranked = sorted(results, key=lambda x: x['score'], reverse=True)
+
+        logger.debug(f"[DOC_SEARCH] Re-ranking complete. Score changes:")
+        for i, (orig, new) in enumerate(zip(results[:5], reranked[:5]), 1):
+            logger.debug(f"[DOC_SEARCH]   Position {i}: score {orig['original_score']:.3f} -> {new['score']:.3f} | {new['url'][:60]}")
+
+        return reranked
+
     def _initialize_components(self):
         """Initialize LangChain components."""
         if self.embeddings is None:
@@ -1147,6 +1199,11 @@ class HashiCorpDocSearchIndex:
                 length_function=len,
                 separators=["\n\n", "\n", ". ", " ", ""]
             )
+
+        if self.enable_reranking and self.cross_encoder is None:
+            logger.info(f"[DOC_SEARCH] Loading cross-encoder model for re-ranking: {self.rerank_model}")
+            self.cross_encoder = CrossEncoder(self.rerank_model)
+            logger.info(f"[DOC_SEARCH] Cross-encoder loaded (will re-rank top-{self.rerank_top_k} results)")
 
     def _build_index(self, url_list: List[Dict[str, str]]):
         """Build FAISS index using LangChain with resume capability.
@@ -1412,7 +1469,12 @@ class HashiCorpDocSearchIndex:
             # EnsembleRetriever doesn't support metadata filtering,
             # so retrieve more results and filter afterward
             # Retrieve many more when filtering (product filter removes ~80% of results)
-            k = top_k * 10 if product_filter else top_k * 3
+            # If re-ranking enabled, retrieve rerank_top_k candidates for re-scoring
+            if self.enable_reranking:
+                k = self.rerank_top_k * 10 if product_filter else self.rerank_top_k
+                logger.debug(f"[DOC_SEARCH] Re-ranking enabled: retrieving {k} candidates for cross-encoder")
+            else:
+                k = top_k * 10 if product_filter else top_k * 3
 
             # Update k for both retrievers
             self.bm25_retriever.k = k
@@ -1478,29 +1540,42 @@ class HashiCorpDocSearchIndex:
 
             logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} results (max 2 sections per page)")
 
-            # Limit to top_k after boosting and re-ranking
+            # Apply cross-encoder re-ranking if enabled
+            if self.enable_reranking and self.cross_encoder:
+                # Re-rank before limiting to top_k
+                results = self._rerank_results(query, results)
+
+            # Limit to top_k after re-ranking
             results = results[:top_k]
 
-            logger.debug(f"[DOC_SEARCH] After boosting and limiting to top_k={top_k}:")
+            logger.debug(f"[DOC_SEARCH] Final results (top_k={top_k}):")
             for i, r in enumerate(results, 1):
                 is_vd = "validated-designs" in r["url"]
-                logger.debug(f"[DOC_SEARCH]   {i}. [score={r['score']:.3f}] [VD={is_vd}] {r['url'][:80]}")
+                rerank_info = f" [rerank={r.get('rerank_score', 0):.3f}]" if 'rerank_score' in r else ""
+                logger.debug(f"[DOC_SEARCH]   {i}. [score={r['score']:.3f}]{rerank_info} [VD={is_vd}] {r['url'][:80]}")
                 logger.debug(f"[DOC_SEARCH]      Content preview: {r['text'][:150]}...")
 
         else:
             logger.debug("[DOC_SEARCH] Using semantic-only search (FAISS)")
             # Fall back to pure semantic search with filtering
+            # If re-ranking enabled, retrieve more candidates for re-scoring
+            if self.enable_reranking:
+                k = self.rerank_top_k * 2 if product_filter else self.rerank_top_k
+                logger.debug(f"[DOC_SEARCH] Re-ranking enabled: retrieving {k} candidates for cross-encoder")
+            else:
+                k = top_k * 2 if product_filter else top_k
+
             if product_filter:
                 filter_dict = {"product": product_filter.lower()}
                 docs_and_scores = self.vectorstore.similarity_search_with_score(
                     query,
-                    k=top_k * 2,
+                    k=k,
                     filter=filter_dict
                 )
             else:
                 docs_and_scores = self.vectorstore.similarity_search_with_score(
                     query,
-                    k=top_k
+                    k=k
                 )
 
             # Format results
@@ -1538,9 +1613,17 @@ class HashiCorpDocSearchIndex:
                     url_counts[base_url] = count + 1
                     deduplicated_results.append(r)
 
-            results = deduplicated_results[:top_k]
+            results = deduplicated_results
 
             logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} results (max 2 sections per page)")
+
+            # Apply cross-encoder re-ranking if enabled
+            if self.enable_reranking and self.cross_encoder:
+                # Re-rank before limiting to top_k
+                results = self._rerank_results(query, results)
+
+            # Limit to top_k after re-ranking
+            results = results[:top_k]
 
         logger.info(f"[DOC_SEARCH] Found {len(results)} results for: {query}")
         logger.debug(f"[DOC_SEARCH] === FINAL RESULTS ({len(results)} total) ===")
