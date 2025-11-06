@@ -6,8 +6,43 @@ This directory contains tests for the Ivan AI assistant, focused on validating H
 
 ### Regression Tests (Required)
 
+#### `test_certification.py` ⭐ PRIMARY TEST
+**Purpose**: End-to-end regression test using HashiCorp certification practice questions.
+
+**What it tests**:
+- Full Ivan pipeline: API → search → LLM → response
+- Uses real HashiCorp certification questions as test cases
+- Tests Ivan's ability to answer technical questions correctly
+- Validates search quality + LLM reasoning together
+
+**Requirements**:
+- **Ivan must be running**: `python ivan.py` in a separate terminal
+- Backend LLM must be available (LM Studio/Ollama)
+
+**Test data**:
+- Questions: `tests/certification_questions.json`
+- Source: [Vault Associate (003) Practice Questions](https://developer.hashicorp.com/vault/tutorials/associate-cert-003/associate-questions-003)
+- 14 questions: True/False, Multiple Choice, Multiple Answer
+
+**Run**:
+```bash
+# Terminal 1: Start Ivan
+source venv/bin/activate
+python ivan.py
+
+# Terminal 2: Run test
+source venv/bin/activate
+python tests/test_certification.py
+```
+
+**Expected output**: Pass rate depends on LLM quality. Aim for 80%+ pass rate.
+
+**Adding new questions**: Add to `certification_questions.json` or scrape new certification pages.
+
+---
+
 #### `test_comparison.py`
-**Purpose**: Comprehensive regression test suite for HashiCorp documentation search quality.
+**Purpose**: Low-level regression test for search quality (no LLM required).
 
 **What it tests**:
 - Tests the web crawler search implementation (hashicorp_web_search.py)

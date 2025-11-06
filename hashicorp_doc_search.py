@@ -433,10 +433,78 @@ class HashiCorpDocSearchIndex:
             # If robots.txt parsing fails, be conservative and allow
             return True
 
+    def _extract_table_as_markdown(self, table_element) -> Optional[str]:
+        """Convert HTML table to markdown format.
+
+        Args:
+            table_element: BeautifulSoup table element
+
+        Returns:
+            Markdown-formatted table string or None if table is empty
+        """
+        try:
+            rows = []
+
+            # Extract headers from thead or first row
+            headers = []
+            thead = table_element.find('thead')
+            if thead:
+                header_row = thead.find('tr')
+                if header_row:
+                    headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+
+            # If no thead, check if first row in tbody has th elements
+            if not headers:
+                tbody = table_element.find('tbody') or table_element
+                first_row = tbody.find('tr')
+                if first_row:
+                    ths = first_row.find_all('th')
+                    if ths:
+                        headers = [th.get_text(strip=True) for th in ths]
+                    else:
+                        # First row might be headers even if using td
+                        headers = [td.get_text(strip=True) for td in first_row.find_all('td')]
+
+            if not headers:
+                return None
+
+            # Build markdown header
+            markdown_parts = []
+            markdown_parts.append('| ' + ' | '.join(headers) + ' |')
+            markdown_parts.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
+
+            # Extract data rows from tbody
+            tbody = table_element.find('tbody') or table_element
+            data_rows = tbody.find_all('tr')
+
+            # Skip first row if it was used for headers
+            start_idx = 1 if not thead and data_rows else 0
+            if thead:
+                start_idx = 0
+
+            for row in data_rows[start_idx:]:
+                cells = row.find_all(['td', 'th'])
+                if cells:
+                    cell_texts = [cell.get_text(strip=True).replace('|', '\\|') for cell in cells]
+                    # Pad with empty cells if needed
+                    while len(cell_texts) < len(headers):
+                        cell_texts.append('')
+                    markdown_parts.append('| ' + ' | '.join(cell_texts[:len(headers)]) + ' |')
+
+            # Only return if we have at least one data row
+            if len(markdown_parts) > 2:
+                return '\n'.join(markdown_parts)
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"[DOC_SEARCH] Failed to extract table: {e}")
+            return None
+
     def _extract_main_content(self, html: str, url: str) -> Optional[Dict[str, Any]]:
         """Extract main documentation content from HTML page with section anchors.
 
-        Preserves structure including headings, anchors, and code blocks for better context.
+        Preserves structure including headings, anchors, code blocks, and tables for better context.
 
         Args:
             html: Raw HTML content
@@ -538,6 +606,16 @@ class HashiCorpDocSearchIndex:
                         li_text = element.get_text(strip=True)
                         if li_text:
                             text_parts.append(f"- {li_text}\n")
+                        processed_elements.add(id(element))
+
+                    elif element.name == 'table':
+                        # Extract table and convert to markdown format
+                        table_markdown = self._extract_table_as_markdown(element)
+                        if table_markdown:
+                            text_parts.append(f"\n{table_markdown}\n")
+                        # Mark all table descendants as processed
+                        for descendant in element.descendants:
+                            processed_elements.add(id(descendant))
                         processed_elements.add(id(element))
 
                 # Join and clean up excessive whitespace
