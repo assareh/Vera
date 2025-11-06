@@ -7,38 +7,38 @@ An intelligent assistant designed to optimize solutions engineering workflows.
 <table>
 <tr>
 <td align="center" width="25%">
-<h3>🔒 Fully Private</h3>
-<p>Private inference on your own machine(s). Your data stays yours - no third parties, no tracking.</p>
+  <h3>🔒 Fully Private</h3>
+  <p>Runs entirely on your machine or private infrastructure. No data leaves your environment — ever.</p>
 </td>
 <td align="center" width="25%">
-<h3>🧩 Browser Extension</h3>
-<p>Chrome extension for seamless Salesforce integration and form automation</p>
+  <h3>🧩 Browser Extension</h3>
+  <p>Chrome extension for seamless Salesforce integration and automated form completion.</p>
 </td>
 <td align="center" width="25%">
-<h3>📝 Auto Note Integration</h3>
-<p>Automatically integrates with your note system - no more copy-pasting meeting notes</p>
+  <h3>🛠️ Built-in Tools + Notes Intelligence</h3>
+  <p>Understands what day it is, can search your notes & customer data wherever they are — no more copy/paste.</p>
 </td>
 <td align="center" width="25%">
-<h3>📚 Chat History</h3>
-<p>Never lose context - complete conversation history preserved across sessions</p>
+  <h3>💬 Chat History & Threads</h3>
+  <p>Complete conversation history with thread organization.</p>
 </td>
 </tr>
 <tr>
 <td align="center" width="25%">
-<h3>🔌 OpenAI Compatible</h3>
-<p>Standard API that integrates seamlessly with existing tools and workflows</p>
+  <h3>🔌 OpenAI Compatible</h3>
+  <p>Drop-in API compatibility with existing OpenAI workflows, clients, and integrations.</p>
 </td>
 <td align="center" width="25%">
-<h3>🎯 Multiple Backends</h3>
-<p>Supports both Ollama and LM Studio - use any local LLM you prefer</p>
+  <h3>🎯 Multiple Backends</h3>
+  <p>Works with Ollama or LM Studio — use any local LLM you prefer.</p>
 </td>
 <td align="center" width="25%">
-<h3>✨ Smart Suggestions</h3>
-<p>AI-powered contextual suggestions and auto-completion for faster workflows</p>
+  <h3>🏗️ HashiCorp Expert Mode</h3>
+  <p>Deep knowledge of Terraform, Vault, Consul, Nomad — including product docs, guides, and best-practice architecture examples.</p>
 </td>
 <td align="center" width="25%">
-<h3>💬 Chat Threads</h3>
-<p>Organize conversations with full thread support through Open Web UI integration</p>
+  <h3>✨ Smart Suggestions</h3>
+  <p>AI-powered contextual suggestions and auto-completion for faster workflows.</p>
 </td>
 </tr>
 </table>
