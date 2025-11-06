@@ -370,13 +370,20 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
             # Add site filter for HashiCorp docs
             web_query = f"{query} site:developer.hashicorp.com"
 
-            # Try DuckDuckGo first (free, no API key needed)
+            # Try Ollama web search first (requires API key but more reliable)
             try:
-                web_results = ddg_web_search(web_query, max_results=5)
-            except Exception as ddg_error:
-                logger.warning(f"[HASHICORP_SEARCH] DuckDuckGo search failed: {ddg_error}")
-                # DuckDuckGo failed, return local results only
-                web_results = []
+                if config.OLLAMA_API_KEY:
+                    web_results = ollama_web_search(web_query, max_results=5)
+                else:
+                    logger.info(f"[HASHICORP_SEARCH] OLLAMA_API_KEY not set, falling back to DuckDuckGo")
+                    web_results = ddg_web_search(web_query, max_results=5)
+            except Exception as web_error:
+                logger.warning(f"[HASHICORP_SEARCH] Web search failed: {web_error}, trying DuckDuckGo")
+                try:
+                    web_results = ddg_web_search(web_query, max_results=5)
+                except Exception as ddg_error:
+                    logger.warning(f"[HASHICORP_SEARCH] DuckDuckGo also failed: {ddg_error}")
+                    web_results = []
 
             if web_results:
                 logger.info(f"[HASHICORP_SEARCH] Found {len(web_results)} web results")
