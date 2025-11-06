@@ -292,11 +292,11 @@ class HashiCorpDocsSearchInput(BaseModel):
 
 
 def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -> str:
-    """Search HashiCorp product documentation.
+    """Search HashiCorp product documentation with web search fallback.
 
     This tool searches developer.hashicorp.com including all product documentation,
-    validated designs, and technical guides. Use this when users ask questions about
-    HashiCorp products like Terraform, Vault, Consul, Nomad, Packer, or Waypoint.
+    validated designs, and technical guides. If local index confidence is low,
+    automatically falls back to live web search for better coverage.
 
     ⚠️  CRITICAL: When citing HashiCorp resources:
     - Use ONLY the URLs provided in the search results
@@ -318,16 +318,106 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
     # Limit results
     max_results = min(max(1, max_results), 10)
 
+    # Confidence threshold for web search fallback
+    CONFIDENCE_THRESHOLD = 6.0
+
     # Search using the doc crawler
     try:
-        results = search_docs(query, top_k=max_results, product=product)
-        logger.info(f"[HASHICORP_SEARCH] Search completed")
-        logger.debug(f"[HASHICORP_SEARCH] === TOOL RETURNING TO LLM ===")
-        logger.debug(f"[HASHICORP_SEARCH] Result type: {type(results)}")
-        logger.debug(f"[HASHICORP_SEARCH] Result length: {len(results) if isinstance(results, str) else 'N/A'} chars")
-        logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {results[:500] if isinstance(results, str) else str(results)[:500]}")
-        logger.debug(f"[HASHICORP_SEARCH] === END TOOL RETURN ===")
-        return results
+        from hashicorp_doc_search import get_doc_search_index
+
+        # Get raw results to check confidence scores
+        index = get_doc_search_index()
+        if index.vectorstore is None:
+            index.initialize()
+
+        raw_results = index.search(query, top_k=max_results, product_filter=product if product else None)
+
+        # Check if we need web search fallback
+        use_web_fallback = False
+        if not raw_results:
+            logger.info(f"[HASHICORP_SEARCH] No results from local index, falling back to web search")
+            use_web_fallback = True
+        elif raw_results[0]['score'] < CONFIDENCE_THRESHOLD:
+            logger.info(f"[HASHICORP_SEARCH] Low confidence ({raw_results[0]['score']:.2f} < {CONFIDENCE_THRESHOLD}), falling back to web search")
+            use_web_fallback = True
+
+        # Format local results
+        local_output = []
+        if raw_results:
+            local_output.append(f"Found {len(raw_results)} result(s) in HashiCorp Developer Documentation:\n")
+            for idx, result in enumerate(raw_results, 1):
+                local_output.append(f"\n{idx}. [{result['product'].upper()}]")
+                local_output.append(f"   URL: {result['url']}")
+                local_output.append(f"   Relevance: {result['score']:.2f}")
+                text_preview = result['text'][:900]
+                if len(result['text']) > 900:
+                    text_preview += "..."
+                local_output.append(f"   Content: {text_preview}")
+                local_output.append("")
+
+        # If confidence is high, return local results only
+        if not use_web_fallback:
+            results = "\n".join(local_output)
+            logger.info(f"[HASHICORP_SEARCH] High confidence results, returning local index only")
+            logger.debug(f"[HASHICORP_SEARCH] === TOOL RETURNING TO LLM ===")
+            logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {results[:500]}")
+            logger.debug(f"[HASHICORP_SEARCH] === END TOOL RETURN ===")
+            return results
+
+        # Add web search fallback
+        try:
+            logger.info(f"[HASHICORP_SEARCH] Fetching web search results...")
+            # Add site filter for HashiCorp docs
+            web_query = f"{query} site:developer.hashicorp.com"
+
+            # Try DuckDuckGo first (free, no API key needed)
+            try:
+                web_results = ddg_web_search(web_query, max_results=5)
+            except Exception as ddg_error:
+                logger.warning(f"[HASHICORP_SEARCH] DuckDuckGo search failed: {ddg_error}")
+                # DuckDuckGo failed, return local results only
+                web_results = []
+
+            if web_results:
+                logger.info(f"[HASHICORP_SEARCH] Found {len(web_results)} web results")
+
+                # Format combined results
+                output = []
+                if local_output:
+                    output.extend(local_output)
+                    output.append("\n" + "="*80)
+                    output.append("⚠️  Note: Local index confidence was low. Adding live web search results below:")
+                    output.append("="*80 + "\n")
+                else:
+                    output.append("No results in local index. Showing live web search results:\n")
+
+                for idx, result in enumerate(web_results, 1):
+                    output.append(f"\n{len(raw_results) + idx}. [WEB SEARCH]")
+                    output.append(f"   URL: {result['url']}")
+                    output.append(f"   Title: {result['title']}")
+                    output.append(f"   Content: {result['description'][:600]}")
+                    output.append("")
+
+                combined_results = "\n".join(output)
+                logger.debug(f"[HASHICORP_SEARCH] === TOOL RETURNING TO LLM (with web fallback) ===")
+                logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {combined_results[:500]}")
+                logger.debug(f"[HASHICORP_SEARCH] === END TOOL RETURN ===")
+                return combined_results
+            else:
+                logger.warning(f"[HASHICORP_SEARCH] Web search returned no results")
+                if local_output:
+                    return "\n".join(local_output)
+                else:
+                    return f"No results found for: '{query}'"
+
+        except Exception as web_error:
+            logger.error(f"[HASHICORP_SEARCH] Web search failed: {web_error}")
+            # Fall back to local results if web search fails
+            if local_output:
+                return "\n".join(local_output)
+            else:
+                return f"Search completed but web fallback failed: {str(web_error)}"
+
     except Exception as e:
         logger.error(f"[HASHICORP_SEARCH] Search failed: {e}")
         return f"Error searching HashiCorp documentation: {str(e)}"

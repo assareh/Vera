@@ -52,6 +52,42 @@ SITEMAP_URL = "https://developer.hashicorp.com/server-sitemap.xml"
 # User agent for crawling
 USER_AGENT = "IvanBot/1.0 (+https://github.com/yourusername/ivan; bot@example.com)"
 
+# Query expansion dictionary - HashiCorp domain-specific synonyms
+QUERY_EXPANSION_TERMS = {
+    # Performance & Hardware
+    "throughput": ["IOPS", "MB/s", "disk performance", "IO performance", "disk IO"],
+    "performance": ["throughput", "IOPS", "latency", "speed", "optimization"],
+    "disk": ["storage", "disk IO", "persistent storage", "volume"],
+    "hardware": ["system requirements", "infrastructure", "server specs", "compute resources"],
+    "requirements": ["sizing", "specifications", "recommendations", "prerequisites"],
+    "needed": ["required", "recommended", "minimum", "suggested"],
+    "run": ["deploy", "operate", "production", "install", "configure"],
+
+    # Vault-specific
+    "vault": ["vault server", "vault cluster", "vault enterprise", "vault deployment"],
+    "seal": ["unseal", "auto-unseal", "seal/unseal"],
+    "secret": ["secrets engine", "kv", "dynamic secrets", "credentials"],
+    "auth": ["authentication", "auth method", "login", "identity"],
+
+    # Consul-specific
+    "consul": ["consul server", "consul agent", "consul cluster", "service mesh"],
+    "service": ["service discovery", "service mesh", "service registration"],
+    "dns": ["service discovery", "DNS forwarding", "DNS query"],
+    "stale": ["consistency", "staleness", "eventual consistency"],
+
+    # Terraform-specific
+    "terraform": ["terraform cli", "terraform cloud", "terraform enterprise", "tf"],
+    "state": ["state file", "remote state", "state backend", "state locking"],
+    "provider": ["provider plugin", "terraform provider"],
+    "module": ["terraform module", "registry module"],
+
+    # General technical terms
+    "default": ["default value", "default setting", "default configuration", "out of the box"],
+    "configuration": ["config", "settings", "parameters", "options"],
+    "install": ["installation", "setup", "deploy", "deployment"],
+    "cluster": ["multi-node", "distributed", "high availability", "HA"],
+}
+
 
 class HashiCorpDocSearchIndex:
     """Manages web documentation crawling, indexing, and semantic search using LangChain."""
@@ -68,7 +104,9 @@ class HashiCorpDocSearchIndex:
         max_workers: int = 10,  # Parallel workers for fetching
         enable_reranking: bool = True,  # Enable cross-encoder re-ranking
         rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",  # Cross-encoder model
-        rerank_top_k: int = 20  # Number of results to re-rank
+        rerank_top_k: int = 20,  # Number of results to re-rank
+        enable_query_expansion: bool = True,  # Enable query expansion with domain synonyms
+        max_expansion_terms: int = 1  # Max number of expansion terms to add per keyword
     ):
         """Initialize the web search index.
 
@@ -84,6 +122,8 @@ class HashiCorpDocSearchIndex:
             enable_reranking: Enable cross-encoder re-ranking (default: True)
             rerank_model: Cross-encoder model for re-ranking
             rerank_top_k: Number of results to retrieve for re-ranking
+            enable_query_expansion: Enable query expansion with domain synonyms (default: True)
+            max_expansion_terms: Max number of expansion terms to add per keyword
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(exist_ok=True)
@@ -112,6 +152,10 @@ class HashiCorpDocSearchIndex:
         self.enable_reranking = enable_reranking
         self.rerank_model = rerank_model
         self.rerank_top_k = rerank_top_k
+
+        # Query expansion configuration
+        self.enable_query_expansion = enable_query_expansion
+        self.max_expansion_terms = max_expansion_terms
 
         # LangChain components
         self.embeddings: Optional[HuggingFaceEmbeddings] = None
@@ -1145,6 +1189,48 @@ class HashiCorpDocSearchIndex:
         logger.info("[DOC_SEARCH] " + "=" * 70)
         return all_chunks
 
+    def _expand_query(self, query: str) -> str:
+        """Expand query with domain-specific synonyms.
+
+        Args:
+            query: Original search query
+
+        Returns:
+            Expanded query with synonyms appended
+        """
+        if not self.enable_query_expansion:
+            return query
+
+        # Tokenize query (simple word splitting, lowercase)
+        query_lower = query.lower()
+        words = query_lower.split()
+
+        # Find expansion terms (limit to max 5 total expansion terms to avoid overwhelming)
+        expansion_terms = []
+        max_total_expansions = 5
+
+        for word in words:
+            if len(expansion_terms) >= max_total_expansions:
+                break
+
+            if word in QUERY_EXPANSION_TERMS:
+                # Add up to max_expansion_terms synonyms for this word
+                synonyms = QUERY_EXPANSION_TERMS[word][:self.max_expansion_terms]
+                for syn in synonyms:
+                    if len(expansion_terms) < max_total_expansions:
+                        expansion_terms.append(syn)
+
+        if not expansion_terms:
+            logger.debug(f"[DOC_SEARCH] No query expansion applied")
+            return query
+
+        # Append expansion terms to original query
+        expanded = f"{query} {' '.join(expansion_terms)}"
+        logger.debug(f"[DOC_SEARCH] Query expansion: '{query}' → added {len(expansion_terms)} terms")
+        logger.debug(f"[DOC_SEARCH] Expanded query: '{expanded}'")
+
+        return expanded
+
     def _rerank_results(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Re-rank search results using cross-encoder.
 
@@ -1444,7 +1530,7 @@ class HashiCorpDocSearchIndex:
         top_k: int = 5,
         product_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Search the index using hybrid search (BM25 + semantic).
+        """Search the index using hybrid search (BM25 + semantic) with optional query expansion.
 
         Args:
             query: Search query
@@ -1455,13 +1541,17 @@ class HashiCorpDocSearchIndex:
             List of search results with text, metadata, and score
         """
         logger.debug(f"[DOC_SEARCH] === SEARCH QUERY ===")
-        logger.debug(f"[DOC_SEARCH] Query: '{query}'")
+        logger.debug(f"[DOC_SEARCH] Original query: '{query}'")
         logger.debug(f"[DOC_SEARCH] top_k: {top_k}")
         logger.debug(f"[DOC_SEARCH] product_filter: {product_filter}")
 
         if self.vectorstore is None:
             logger.error("[DOC_SEARCH] Vector store not initialized")
             return []
+
+        # Expand query with domain synonyms (if enabled)
+        original_query = query
+        query = self._expand_query(query)
 
         # Use hybrid search if available, otherwise fall back to FAISS only
         if self.ensemble_retriever is not None:
@@ -1542,8 +1632,8 @@ class HashiCorpDocSearchIndex:
 
             # Apply cross-encoder re-ranking if enabled
             if self.enable_reranking and self.cross_encoder:
-                # Re-rank before limiting to top_k
-                results = self._rerank_results(query, results)
+                # Re-rank before limiting to top_k (use original query for cross-encoder)
+                results = self._rerank_results(original_query, results)
 
             # Limit to top_k after re-ranking
             results = results[:top_k]
@@ -1619,8 +1709,8 @@ class HashiCorpDocSearchIndex:
 
             # Apply cross-encoder re-ranking if enabled
             if self.enable_reranking and self.cross_encoder:
-                # Re-rank before limiting to top_k
-                results = self._rerank_results(query, results)
+                # Re-rank before limiting to top_k (use original query for cross-encoder)
+                results = self._rerank_results(original_query, results)
 
             # Limit to top_k after re-ranking
             results = results[:top_k]
