@@ -77,6 +77,22 @@ pip install --upgrade pip
 echo -e "${YELLOW}Installing dependencies...${NC}"
 pip install -r requirements.txt
 
+# Create config.py if it doesn't exist
+echo ""
+echo -e "${YELLOW}Setting up configuration...${NC}"
+if [ ! -f "config.py" ]; then
+    if [ -f "config.py.example" ]; then
+        cp config.py.example config.py
+        echo -e "${GREEN}✓${NC} Created config.py from config.py.example"
+        echo "  You can customize config.py or use environment variables in .env"
+    else
+        echo -e "${RED}Error: config.py.example not found${NC}"
+        exit 1
+    fi
+else
+    echo -e "${GREEN}✓${NC} config.py already exists"
+fi
+
 # Apply HashiCorp branding to Open Web UI
 echo ""
 echo -e "${YELLOW}Applying HashiCorp branding...${NC}"

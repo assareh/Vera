@@ -140,7 +140,6 @@ OLLAMA_ENDPOINT=http://localhost:11434
 IVAN_PORT=8000
 IVAN_TEMPERATURE=0.0
 SYSTEM_PROMPT_PATH=system_prompt.md
-NOTES_DIR=notes
 CUSTOMER_NOTES_DIR=Customer_Notes  # Or absolute path
 ```
 
@@ -149,6 +148,17 @@ CUSTOMER_NOTES_DIR=Customer_Notes  # Or absolute path
 - Default model: `openai/gpt-oss-20b`
 - Default port: 8000
 - Default temperature: 0.0
+
+### Configuration File Management
+
+**Important**: `config.py` is not tracked in version control to prevent git conflicts when users customize settings.
+
+- `config.py.example` - Template file tracked in git with default configuration
+- `config.py` - User-specific configuration (auto-created from template during setup)
+- Changes to defaults should be made in `config.py.example`
+- Users can modify `config.py` directly or use environment variables in `.env`
+
+The `setup.sh` script automatically creates `config.py` from `config.py.example` if it doesn't exist.
 
 ## Development Setup
 

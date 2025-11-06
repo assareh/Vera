@@ -170,9 +170,10 @@ export LMSTUDIO_ENDPOINT=http://localhost:1234/v1
 export IVAN_PORT=8000
 export IVAN_TEMPERATURE=0.0
 export SYSTEM_PROMPT_PATH=system_prompt.md
-export NOTES_DIR=notes
 export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
 ```
+
+You can also customize `config.py` directly. The setup script automatically creates `config.py` from `config.py.example` on first run. This file is not tracked in version control, so you can modify defaults without git conflicts.
 
 ## HashiCorp Branding
 

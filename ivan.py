@@ -664,9 +664,6 @@ Port: {port}
 API: http://localhost:{port}/v1
 """)
 
-    # Create notes directory if it doesn't exist
-    Path(config.NOTES_DIR).mkdir(exist_ok=True)
-
     # Handle force-scrape flag
     if force_scrape:
         pages_dir = Path("./hashicorp_web_docs/pages")
