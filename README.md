@@ -43,6 +43,16 @@ An intelligent assistant designed to optimize solutions engineering workflows.
 </tr>
 </table>
 
+## Development Roadmap
+
+See the `roadmap/` directory for project planning and improvement documentation:
+- **ISSUES.md** - Known issues and planned fixes
+- **SEARCH_ALTERNATIVES.md** - Search implementation research and alternatives
+- **CODEBASE_ANALYSIS.md** - Detailed codebase structure analysis
+- **CODE_REVIEW_SUMMARY.md** - Code review findings and recommendations
+
+This directory tracks ongoing improvements, technical decisions, and future enhancements.
+
 ## Chrome Extension
 
 Ivan includes a Chrome extension for automating SE Weekly Updates and WARMER with AI assistance, all directly from within your browser.
