@@ -264,6 +264,25 @@ DEFAULT_PORT = 8000
 - **LM Studio**: Configure temperature in the model settings UI (recommended) or via API
 - **Ivan's IVAN_TEMPERATURE**: This sets the default for API requests, but backend settings take precedence
 
+#### Reasoning Level Settings
+
+Some models support different reasoning levels that affect how deeply the model thinks through problems before responding. **For gpt-oss-20b**, you can choose between:
+
+- **Low** - Faster responses with basic reasoning
+- **Medium** - Balanced reasoning and speed (recommended starting point)
+- **High** - Deeper reasoning for complex problems (slower but more thorough)
+
+**How to configure:**
+- **LM Studio**: In the model settings, look for "Reasoning Level" or similar parameter
+- **Ollama**: Configure in your Modelfile with model-specific parameters (consult model documentation)
+
+**When to experiment with reasoning levels:**
+- **Low**: Quick queries, simple lookups, straightforward documentation searches
+- **Medium**: Most SE workflows, meeting summaries, standard technical questions
+- **High**: Complex architectural decisions, multi-step problem solving, detailed analysis
+
+**Note**: Not all models support reasoning levels. Check your specific model's documentation for availability and configuration options.
+
 ## HashiCorp Branding
 
 Ivan includes HashiCorp branding for the Open Web UI interface. This is applied automatically during the initial setup (`./setup.sh`).
