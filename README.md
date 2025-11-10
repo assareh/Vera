@@ -228,6 +228,27 @@ DEFAULT_PORT = 8000
 
 **Note:** The setup script automatically creates `config.py` from `config.py.example` on first run. This file is not tracked in version control, so you can modify defaults without git conflicts.
 
+#### Context Length Settings
+
+**Important: Set your context length to the maximum supported by your model** for best results. Ivan uses tools and can have long conversations with substantial context, so a larger context window ensures better performance.
+
+**Recommended settings:**
+- **For gpt-oss-20b**: Set context length to **131072** (128K tokens)
+- **For other models**: Set to the maximum supported by your specific model
+
+**How to configure:**
+- **LM Studio**: In the model settings, find "Context Length" or "Max Context" and set it to your model's maximum (e.g., 131072)
+- **Ollama**: Configure in your Modelfile with the `num_ctx` parameter:
+  ```
+  PARAMETER num_ctx 131072
+  ```
+
+**Why it matters:**
+- Enables longer conversations without losing context
+- Supports complex tool calling sequences
+- Allows Ivan to reference more of your customer notes and documentation
+- Prevents context window truncation during extended sessions
+
 #### Temperature Settings
 
 **Recommended: Set temperature to 0.0 in your LLM backend (Ollama or LM Studio)** for the most deterministic, fact-based responses. This is especially important for:
