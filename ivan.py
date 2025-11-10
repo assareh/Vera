@@ -20,6 +20,9 @@ import click
 # (We load embeddings before Flask potentially forks workers)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# Print loading message before heavy ML imports
+print("Loading Ivan... (Initializing AI libraries, this may take 5-15 seconds...)")
+
 import config
 from tools import ALL_TOOLS
 from hashicorp_doc_search import initialize_doc_search

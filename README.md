@@ -65,11 +65,12 @@ Ivan includes a Chrome extension for automating SE Weekly Updates and WARMER wit
 
 ### Usage
 
-1. Open a Salesforce opportunity with an SE Weekly Update field
+1. In Vivun, on the Journeys page, click on an opportunity
 2. Click the Ivan extension icon
-3. Click "Complete SE Weekly Update" to generate an update
-4. Review and refine the generated content through chat
-5. Click "Commit" to insert the update into the field
+3. Optionally add additional context in the text input field
+4. Click "Complete SE Weekly Update" or "Complete WARMER"
+5. Review and refine the generated content through chat
+6. Click "Commit" to insert the update into the field
 
 ## Quick Start
 
@@ -101,12 +102,19 @@ source venv/bin/activate
 
 ### Running Ivan
 
-**Basic usage (with Ollama):**
+**Basic usage (default: LM Studio):**
 ```bash
 python ivan.py
+# Uses LM Studio backend by default with model: openai/gpt-oss-20b
 ```
 
-**With LM Studio:**
+**With Ollama:**
+```bash
+python ivan.py --backend ollama --model openai/gpt-oss-20b
+# Or set via environment variable: export IVAN_BACKEND=ollama
+```
+
+**With LM Studio (custom model):**
 ```bash
 python ivan.py --backend lmstudio --model your-model-name
 ```
@@ -133,7 +141,7 @@ python ivan.py --force-scrape
 
 ### First Run: Automatic Index Building
 
-**On first use**, Ivan will automatically build a searchable index of HashiCorp documentation when you first query HashiCorp docs. This is a one-time setup process that:
+**On first use**, Ivan will automatically build a searchable index of HashiCorp documentation. This is a one-time setup process that:
 
 - **Downloads the sitemap** from developer.hashicorp.com
 - **Crawls documentation pages** from all HashiCorp products
@@ -157,12 +165,31 @@ The index build process:
 
 ### Configuration
 
-Ivan can be configured via environment variables:
+Ivan can be configured in three ways (listed from highest to lowest priority):
+
+#### 1. Command Line Options (Highest Priority)
+
+Override settings for a single session:
+
+```bash
+# Use Ollama with a specific model
+python ivan.py --backend ollama --model openai/gpt-oss-20b
+
+# Use LM Studio with custom port
+python ivan.py --backend lmstudio --model openai/gpt-oss-20b --port 8080
+
+# Combine multiple options
+python ivan.py --backend ollama --model openai/gpt-oss-20b --no-webui --debug
+```
+
+#### 2. Environment Variables (Medium Priority)
+
+Set persistent configuration via `.env` file or shell environment:
 
 ```bash
 # Backend configuration
 export IVAN_BACKEND=ollama          # or lmstudio
-export BACKEND_MODEL=llama3.2       # your model name
+export BACKEND_MODEL=openai/gpt-oss-20b       # your model name
 export OLLAMA_ENDPOINT=http://localhost:11434
 export LMSTUDIO_ENDPOINT=http://localhost:1234/v1
 
@@ -173,7 +200,38 @@ export SYSTEM_PROMPT_PATH=system_prompt.md
 export CUSTOMER_NOTES_DIR=Customer_Notes  # Path to customer meeting notes
 ```
 
-You can also customize `config.py` directly. The setup script automatically creates `config.py` from `config.py.example` on first run. This file is not tracked in version control, so you can modify defaults without git conflicts.
+**Using a .env file:**
+1. Create `.env` in the Ivan directory (use `.env.example` as a template)
+2. Add your settings: `IVAN_BACKEND=ollama`
+3. Settings are automatically loaded when Ivan starts
+
+#### 3. Configuration File (Lowest Priority)
+
+Edit `config.py` directly for permanent defaults:
+
+```python
+# config.py
+BACKEND_TYPE = "ollama"  # or "lmstudio"
+BACKEND_MODEL = "openai/gpt-oss-20b"
+DEFAULT_PORT = 8000
+```
+
+**Note:** The setup script automatically creates `config.py` from `config.py.example` on first run. This file is not tracked in version control, so you can modify defaults without git conflicts.
+
+#### Temperature Settings
+
+**Recommended: Set temperature to 0.0 in your LLM backend (Ollama or LM Studio)** for the most deterministic, fact-based responses. This is especially important for:
+- Technical documentation queries
+- SE Weekly Updates (consistency and accuracy)
+- WARMER assessments (precise documentation)
+- Customer follow-ups (factual communication)
+
+**Note**: You can experiment with slightly higher temperatures (e.g., 0.1-0.3) if you want more creative or varied responses, but start with 0.0 for best results with structured workflows.
+
+**How to configure:**
+- **Ollama**: Set temperature in your Modelfile or via API parameters
+- **LM Studio**: Configure temperature in the model settings UI (recommended) or via API
+- **Ivan's IVAN_TEMPERATURE**: This sets the default for API requests, but backend settings take precedence
 
 ## HashiCorp Branding
 
