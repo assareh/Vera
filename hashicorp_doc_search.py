@@ -31,6 +31,9 @@ from langchain_core.documents import Document
 # Cross-encoder for re-ranking
 from sentence_transformers import CrossEncoder
 
+# Parent-child semantic chunking
+from chunking_utils import semantic_chunk_html
+
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Enable debug logging
@@ -104,8 +107,8 @@ class HashiCorpDocSearchIndex:
         max_workers: int = 5,  # Parallel workers for fetching - reduced to avoid rate limits
         enable_reranking: bool = True,  # Enable cross-encoder re-ranking
         rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",  # Cross-encoder model
-        rerank_top_k: int = 20,  # Number of results to re-rank
-        enable_query_expansion: bool = True,  # Enable query expansion with domain synonyms
+        rerank_top_k: int = 80,  # Number of results to re-rank (retrieves 10x this when filtering by product = 800 candidates)
+        enable_query_expansion: bool = False,  # Enable query expansion with domain synonyms (disabled - too aggressive for technical queries)
         max_expansion_terms: int = 1  # Max number of expansion terms to add per keyword
     ):
         """Initialize the web search index.
@@ -166,6 +169,10 @@ class HashiCorpDocSearchIndex:
         self.chunks: Optional[List[Document]] = None  # Store chunks for BM25
         self.cross_encoder: Optional[CrossEncoder] = None  # Cross-encoder for re-ranking
 
+        # Parent-child chunking storage
+        self.parent_chunks: Dict[str, Dict[str, Any]] = {}  # chunk_id -> parent content/metadata
+        self.child_to_parent: Dict[str, str] = {}  # child_chunk_id -> parent_chunk_id
+
         # Robots.txt parser
         self.robot_parser = RobotFileParser()
         self.robot_parser.set_url("https://developer.hashicorp.com/robots.txt")
@@ -210,7 +217,7 @@ class HashiCorpDocSearchIndex:
             return True
 
         # Check version - force rebuild if chunking strategy changed
-        current_version = "3.0.0-token-adaptive"  # Token-based adaptive chunking by doc type
+        current_version = "4.0.0-parent-child"  # Semantic parent-child chunking with token awareness
         if metadata.get("version") != current_version:
             logger.info(f"[DOC_SEARCH] Index version changed (old: {metadata.get('version', 'unknown')}, new: {current_version}), needs rebuild")
             return True
@@ -414,6 +421,78 @@ class HashiCorpDocSearchIndex:
             import traceback
             logger.error(traceback.format_exc())
             return []
+
+    def _discover_release_notes(self) -> List[Dict[str, str]]:
+        """Discover version-specific release notes pages for all products.
+
+        Release notes aren't in the sitemap, so we generate URLs based on known patterns:
+        - Vault: /vault/docs/v{version}/updates/release-notes
+        - Consul: /consul/docs/v{version}/release-notes
+        - Terraform: /terraform/docs/v{version}/language/v1-compatibility-promises
+        - Other products: similar patterns
+
+        Returns:
+            List of URL info dicts for release notes pages
+        """
+        discovered_urls = []
+        base_url = "https://developer.hashicorp.com"
+        headers = {'User-Agent': USER_AGENT}
+
+        # Product configurations: (product_name, url_pattern, versions_to_try)
+        # versions_to_try: range of minor versions to check (e.g., range(15, 22) for 1.15-1.21)
+        products = [
+            ('vault', '/vault/docs/v1.{minor}.x/updates/release-notes', range(15, 22)),
+            ('consul', '/consul/docs/v1.{minor}.x/release-notes', range(15, 22)),
+            ('terraform', '/terraform/docs/v1.{minor}.x/language/upgrade-guides', range(5, 11)),
+            ('nomad', '/nomad/docs/release-notes/nomad/v1_{minor}_x', range(5, 11)),
+            ('boundary', '/boundary/docs/v0.{minor}.x/release-notes', range(10, 18)),
+            ('waypoint', '/waypoint/docs/v0.{minor}.x/release-notes', range(8, 12)),
+            ('packer', '/packer/docs/v1.{minor}.x/whats-new', range(8, 12)),
+        ]
+
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        logger.info("[DOC_SEARCH] PHASE: Discovering version-specific release notes")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+
+        total_checked = 0
+        total_found = 0
+
+        for product, url_pattern, versions in products:
+            logger.info(f"[DOC_SEARCH] Checking {product} release notes...")
+            product_found = 0
+
+            for minor in versions:
+                url = base_url + url_pattern.format(minor=minor)
+                total_checked += 1
+
+                try:
+                    # Test if URL exists
+                    response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
+
+                    if response.status_code == 200:
+                        discovered_urls.append({
+                            "url": url,
+                            "product": product,
+                            "lastmod": None
+                        })
+                        product_found += 1
+                        logger.debug(f"[DOC_SEARCH]   ✓ Found: {url}")
+
+                    time.sleep(self.rate_limit_delay)
+
+                except Exception as e:
+                    logger.debug(f"[DOC_SEARCH]   ✗ Not found: {url}")
+                    continue
+
+            if product_found > 0:
+                logger.info(f"[DOC_SEARCH]   ✓ {product}: found {product_found} versions")
+                total_found += product_found
+            else:
+                logger.warning(f"[DOC_SEARCH]   ✗ {product}: no release notes found")
+
+        logger.info(f"[DOC_SEARCH] Release notes discovery: found {total_found}/{total_checked} URLs")
+        logger.info("[DOC_SEARCH] " + "=" * 70)
+        return discovered_urls
 
     def _normalize_url(self, url: str) -> str:
         """Normalize URL by removing anchors/fragments.
@@ -735,7 +814,8 @@ class HashiCorpDocSearchIndex:
                 "lastmod": url_info["lastmod"],
                 "content": extracted["content"],
                 "sections": extracted["sections"],
-                "length": len(extracted["content"])
+                "length": len(extracted["content"]),
+                "html": response.text  # Store raw HTML for parent-child chunking
             }
 
         except Exception as e:
@@ -870,42 +950,30 @@ class HashiCorpDocSearchIndex:
         return page_data
 
     def _split_into_sections(self, page_data: Dict[str, Any]) -> List[Document]:
-        """Split page content into section-aware chunks using token-based sizing.
+        """Split page content into parent-child semantic chunks.
 
-        Chunks by H2/H3 boundaries with adaptive sizing based on doc type.
-        Preserves section anchors and heading context.
+        Uses semantic_chunk_html for token-aware hierarchical chunking.
+        Stores parent chunks separately and indexes only child chunks.
 
         Args:
-            page_data: Page data with content, sections, and metadata
+            page_data: Page data with HTML, content, sections, and metadata
 
         Returns:
-            List of Document chunks with section metadata
+            List of Document chunks (child chunks only, for indexing)
         """
-        content = page_data["content"]
-        sections = page_data.get("sections", [])
         url = page_data["url"]
         product = page_data["product"]
+        html = page_data.get("html")
 
-        # Get adaptive chunk configuration for this doc type
-        chunk_config = self._get_chunk_config(url)
-        chunk_size_tokens = chunk_config['size']
-        overlap_tokens = chunk_config['overlap']
-
-        if not sections:
-            # Fallback to token-based splitting if no sections found
-            logger.debug(f"[DOC_SEARCH] No sections found for {url}, using token-based split")
-            # Split by tokens using text splitter
+        if not html:
+            # Fallback to old method if HTML not available (shouldn't happen with new fetch)
+            logger.warning(f"[DOC_SEARCH] No HTML available for {url}, using content fallback")
+            content = page_data["content"]
+            # Use simple text splitter
             if self.text_splitter is None:
                 self._initialize_components()
 
-            # Temporarily update text splitter with adaptive config
-            from langchain_text_splitters import TokenTextSplitter
-            token_splitter = TokenTextSplitter(
-                chunk_size=chunk_size_tokens,
-                chunk_overlap=overlap_tokens
-            )
-            split_docs = token_splitter.split_text(content)
-
+            split_docs = self.text_splitter.split_text(content)
             return [Document(
                 page_content=chunk,
                 metadata={
@@ -916,125 +984,85 @@ class HashiCorpDocSearchIndex:
                 }
             ) for chunk in split_docs]
 
-        chunks = []
+        try:
+            # Use semantic chunking to create parent-child hierarchy
+            result = semantic_chunk_html(html, url)
+            parents = result.get('parents', [])
+            children = result.get('children', [])
 
-        # Group sections by H2 (major sections)
-        h2_sections = [s for s in sections if s['level'] == 2]
+            if not children:
+                logger.warning(f"[DOC_SEARCH] No children chunks created for {url}")
+                # Fallback to content-based splitting
+                content = page_data["content"]
+                if self.text_splitter is None:
+                    self._initialize_components()
+                split_docs = self.text_splitter.split_text(content)
+                return [Document(
+                    page_content=chunk,
+                    metadata={
+                        "url": url,
+                        "product": product,
+                        "source": "web",
+                        "lastmod": page_data.get("lastmod")
+                    }
+                ) for chunk in split_docs]
 
-        for i, section in enumerate(h2_sections):
-            start_pos = section['position']
+            # Store parent chunks in the parent_chunks dict
+            for parent in parents:
+                chunk_id = parent['chunk_id']
+                self.parent_chunks[chunk_id] = {
+                    'content': parent['content'],
+                    'metadata': parent['metadata'],
+                    'url': url,
+                    'product': product,
+                    'lastmod': page_data.get("lastmod")
+                }
 
-            # Find the end position (start of next H2 or end of content)
-            if i + 1 < len(h2_sections):
-                end_pos = h2_sections[i + 1]['position']
-            else:
-                end_pos = len(content)
+            # Create LangChain Documents from child chunks
+            child_docs = []
+            for child in children:
+                chunk_id = child['chunk_id']
+                parent_id = child['metadata'].parent_id
 
-            # Extract section content
-            section_content = content[start_pos:end_pos].strip()
-            section_heading = section['text']
-            section_anchor = section['anchor']
+                # Store child-to-parent mapping
+                self.child_to_parent[chunk_id] = parent_id
 
-            # Check token count instead of character count
-            section_tokens = self._count_tokens(section_content)
-
-            # If section is too large, split it by H3 subsections
-            if section_tokens > chunk_size_tokens:
-                # Find H3s within this H2 section
-                h3_in_section = [
-                    s for s in sections
-                    if s['level'] == 3
-                    and s['position'] >= start_pos
-                    and s['position'] < end_pos
-                ]
-
-                if h3_in_section:
-                    # Split by H3 boundaries
-                    for j, h3 in enumerate(h3_in_section):
-                        h3_start = h3['position']
-
-                        # Find end of H3 section
-                        if j + 1 < len(h3_in_section):
-                            h3_end = h3_in_section[j + 1]['position']
-                        else:
-                            h3_end = end_pos
-
-                        h3_content = content[h3_start:h3_end].strip()
-
-                        # Include parent H2 heading as context
-                        chunk_text = f"## {section_heading}\n\n{h3_content}"
-                        chunk_tokens = self._count_tokens(chunk_text)
-
-                        # If still too large, use token-based splitting with overlap
-                        if chunk_tokens > chunk_size_tokens * 2:
-                            # Split into smaller chunks
-                            sub_chunks = self._split_large_section(
-                                chunk_text,
-                                section_heading,
-                                h3['anchor'],
-                                chunk_size_tokens,
-                                overlap_tokens
-                            )
-                            for sub_chunk in sub_chunks:
-                                chunks.append(Document(
-                                    page_content=sub_chunk,
-                                    metadata={
-                                        "url": url,
-                                        "product": product,
-                                        "source": "web",
-                                        "lastmod": page_data.get("lastmod"),
-                                        "section_anchor": h3['anchor'],
-                                        "section_heading": f"{section_heading} > {h3['text']}"
-                                    }
-                                ))
-                        else:
-                            chunks.append(Document(
-                                page_content=chunk_text,
-                                metadata={
-                                    "url": url,
-                                    "product": product,
-                                    "source": "web",
-                                    "lastmod": page_data.get("lastmod"),
-                                    "section_anchor": h3['anchor'],
-                                    "section_heading": f"{section_heading} > {h3['text']}"
-                                }
-                            ))
-                else:
-                    # No H3s, split the large H2 section by tokens
-                    sub_chunks = self._split_large_section(
-                        section_content,
-                        section_heading,
-                        section_anchor,
-                        chunk_size_tokens,
-                        overlap_tokens
-                    )
-                    for sub_chunk in sub_chunks:
-                        chunks.append(Document(
-                            page_content=sub_chunk,
-                            metadata={
-                                "url": url,
-                                "product": product,
-                                "source": "web",
-                                "lastmod": page_data.get("lastmod"),
-                                "section_anchor": section_anchor,
-                                "section_heading": section_heading
-                            }
-                        ))
-            else:
-                # Section is small enough, keep as single chunk
-                chunks.append(Document(
-                    page_content=section_content,
+                # Create Document with enriched metadata
+                doc = Document(
+                    page_content=child['content'],
                     metadata={
                         "url": url,
                         "product": product,
                         "source": "web",
                         "lastmod": page_data.get("lastmod"),
-                        "section_anchor": section_anchor,
-                        "section_heading": section_heading
+                        "chunk_id": chunk_id,
+                        "parent_id": parent_id,
+                        "heading": child['metadata'].heading_path_joined,
+                        "doc_type": child['metadata'].doc_type,
+                        "version": child['metadata'].version
                     }
-                ))
+                )
+                child_docs.append(doc)
 
-        return chunks
+            logger.debug(f"[DOC_SEARCH] {url}: {len(parents)} parents, {len(children)} children")
+            return child_docs
+
+        except Exception as e:
+            logger.error(f"[DOC_SEARCH] Semantic chunking failed for {url}: {e}")
+            # Fallback to content-based splitting
+            content = page_data["content"]
+            if self.text_splitter is None:
+                self._initialize_components()
+            split_docs = self.text_splitter.split_text(content)
+            return [Document(
+                page_content=chunk,
+                metadata={
+                    "url": url,
+                    "product": product,
+                    "source": "web",
+                    "lastmod": page_data.get("lastmod")
+                }
+            ) for chunk in split_docs]
 
     def _split_large_section(
         self,
@@ -1257,11 +1285,52 @@ class HashiCorpDocSearchIndex:
         # Score all pairs
         scores = self.cross_encoder.predict(pairs)
 
-        # Update results with new scores
+        # Update results with new scores, preserving URL boost
         for result, score in zip(results, scores):
             result['rerank_score'] = float(score)
             result['original_score'] = result['score']
-            result['score'] = float(score)
+
+            # Apply URL boost to cross-encoder score (for release notes)
+            base_url = result.get('url', '')
+            boosted_score = float(score)
+
+            # Check if this is a release notes URL
+            is_release_notes = "/release-notes/" in base_url or "/releases/" in base_url or "/updates/release-notes" in base_url
+
+            if is_release_notes:
+                # Check if we have version info and this URL matches the exact version
+                version_info = getattr(self, '_current_version_info', None)
+                if version_info and version_info.get('is_version_query'):
+                    version = version_info.get('version_major_minor') or version_info.get('version')
+                    product = version_info.get('product')
+
+                    # Check if URL contains the exact version (e.g., "v1_9_x" or "v1.9")
+                    # Handle both underscore (v1_9_x) and dot (v1.9.x) formats
+                    version_patterns = [
+                        f"v{version.replace('.', '_')}",  # e.g., "v1_9"
+                        f"v{version}",  # e.g., "v1.9"
+                        f"/{version}.",  # e.g., "/1.9."
+                        f"/{version}/",  # e.g., "/1.9/"
+                    ]
+
+                    # Also check product match
+                    product_match = product and product in base_url.lower()
+                    version_match = any(pattern in base_url for pattern in version_patterns)
+
+                    if product_match and version_match:
+                        # VERY STRONG boost for exact version match (4.0x = 300% boost)
+                        boosted_score = boosted_score * 4.0
+                        logger.debug(f"[DOC_SEARCH]   🎯 Exact version match boost: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}")
+                    else:
+                        # Regular boost for release notes (2.0x = 100% boost)
+                        boosted_score = boosted_score * 2.0
+                        logger.debug(f"[DOC_SEARCH]   URL boost applied: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}")
+                else:
+                    # Regular boost for release notes when not a version query (2.0x = 100% boost)
+                    boosted_score = boosted_score * 2.0
+                    logger.debug(f"[DOC_SEARCH]   URL boost applied: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}")
+
+            result['score'] = boosted_score
 
         # Sort by new scores (descending)
         reranked = sorted(results, key=lambda x: x['score'], reverse=True)
@@ -1445,15 +1514,28 @@ class HashiCorpDocSearchIndex:
         logger.info("[DOC_SEARCH] " + "=" * 70)
 
         # Check if we need to update
-        if not force_update and not self._needs_update():
+        needs_update = force_update or self._needs_update()
+
+        # Check if version changed (which requires URL rediscovery)
+        metadata = self._load_metadata()
+        current_version = "3.1.0-release-notes"
+        version_changed = metadata.get("version") != current_version
+
+        if not needs_update:
             if self._load_index():
                 logger.info("[DOC_SEARCH] Using cached index")
                 return
             else:
                 logger.warning("[DOC_SEARCH] Failed to load cache, rebuilding")
+                needs_update = True
 
-        # Try to resume from saved URL list
-        url_list = self._load_url_list()
+        # Try to resume from saved URL list (but not if version changed - need to rediscover)
+        url_list = None if version_changed else self._load_url_list()
+
+        # If version changed, also invalidate chunks cache (new URLs need to be fetched)
+        if version_changed and self.chunks_file.exists():
+            logger.info("[DOC_SEARCH] Version changed, clearing chunks cache to fetch new pages...")
+            self.chunks_file.unlink()
 
         if url_list is None or force_update:
             logger.info("[DOC_SEARCH] " + "=" * 70)
@@ -1485,6 +1567,17 @@ class HashiCorpDocSearchIndex:
                 url_list = list(all_urls.values())
                 logger.info(f"[DOC_SEARCH] ✓ Total: {len(url_list):,} unique URLs")
 
+            # Discover version-specific release notes (not in sitemap)
+            release_notes = self._discover_release_notes()
+            if release_notes:
+                logger.info(f"[DOC_SEARCH] ✓ Adding {len(release_notes):,} release notes pages")
+                # Merge with existing URLs, deduplicating by URL
+                all_urls = {url_info["url"]: url_info for url_info in url_list}
+                for url_info in release_notes:
+                    all_urls[url_info["url"]] = url_info
+                url_list = list(all_urls.values())
+                logger.info(f"[DOC_SEARCH] ✓ Total: {len(url_list):,} unique URLs")
+
             # Save URL list for resume capability
             self._save_url_list(url_list)
             logger.info("[DOC_SEARCH] " + "=" * 70)
@@ -1509,7 +1602,7 @@ class HashiCorpDocSearchIndex:
 
         # Update metadata
         metadata = {
-            "version": "3.0.0-token-adaptive",
+            "version": "3.1.0-release-notes",
             "last_update": datetime.now().isoformat(),
             "page_count": len(url_list),
             "model_name": self.model_name,
@@ -1528,6 +1621,114 @@ class HashiCorpDocSearchIndex:
         logger.info(f"[DOC_SEARCH] Model: {self.model_name}")
         logger.info("[DOC_SEARCH] " + "=" * 70)
         logger.info("")
+
+    def _detect_version_query(self, query: str) -> Optional[Dict[str, Any]]:
+        """Detect version-specific queries and extract product/version metadata.
+
+        Args:
+            query: Search query string
+
+        Returns:
+            Dictionary with product, version, and flags, or None if not a version query
+        """
+        query_lower = query.lower()
+
+        # Pattern 1: "what's new in {product} {version}" or "{product} {version}"
+        # Matches: vault 1.20, consul 1.21, nomad 1.9, boundary 0.18, terraform 1.10
+        version_pattern = r'(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)\s+v?(\d+\.\d+(?:\.\d+)?)'
+        match = re.search(version_pattern, query_lower)
+
+        if match:
+            product = match.group(1)
+            version = match.group(2)
+            logger.debug(f"[DOC_SEARCH] ✓ Detected version query: product={product}, version={version}")
+            return {
+                'product': product,
+                'version': version,
+                'is_version_query': True,
+                'version_major_minor': '.'.join(version.split('.')[:2])  # e.g., "1.20" from "1.20.3"
+            }
+
+        # Pattern 2: "latest {product}" or "{product} latest"
+        latest_pattern = r'latest\s+(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)|(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)\s+latest'
+        match = re.search(latest_pattern, query_lower)
+
+        if match:
+            product = match.group(1) or match.group(2)
+            logger.debug(f"[DOC_SEARCH] ✓ Detected 'latest' query: product={product}")
+            return {
+                'product': product,
+                'version': 'latest',
+                'is_version_query': True,
+                'is_latest_query': True
+            }
+
+        return None
+
+    def _prefilter_version_candidates(
+        self,
+        docs: List[Document],
+        version_info: Dict[str, Any],
+        max_candidates: int = 100
+    ) -> List[Document]:
+        """Pre-filter candidates for version queries to reduce re-ranking time.
+
+        For version queries, we can dramatically reduce the candidate pool before
+        expensive cross-encoder re-ranking by prioritizing documents with exact
+        version matches in their URLs.
+
+        Args:
+            docs: List of documents from hybrid search
+            version_info: Version query metadata from _detect_version_query()
+            max_candidates: Maximum candidates to return for re-ranking (default: 100)
+
+        Returns:
+            Filtered list of documents prioritizing version-specific URLs
+        """
+        version = version_info.get('version_major_minor') or version_info.get('version')
+        product = version_info.get('product')
+
+        if not version or not product:
+            return docs[:max_candidates]
+
+        # Build version pattern variations
+        # Different products use different URL formats:
+        # - Nomad: /v1_9_x or /v1-9-x
+        # - Vault: /v1.20.x
+        # - Consul: /v1_21_x or /v1.21.x
+        version_patterns = [
+            f"v{version.replace('.', '_')}",  # e.g., "v1_9" or "v1_20"
+            f"v{version}",  # e.g., "v1.9" or "v1.20"
+            f"/v{version}.",  # e.g., "/v1.9." or "/v1.20."
+            f"/{version}.",  # e.g., "/1.9." or "/1.20."
+            f"/{version}/",  # e.g., "/1.9/" or "/1.20/"
+        ]
+
+        # Split documents into priority groups
+        exact_matches = []  # URLs with exact version match
+        top_candidates = []  # Top-scored from hybrid search
+
+        for i, doc in enumerate(docs):
+            url = doc.metadata.get('url', '')
+
+            # Check for exact version match
+            has_version_match = any(pattern in url for pattern in version_patterns)
+
+            if has_version_match:
+                exact_matches.append(doc)
+            elif i < max_candidates // 2:  # Keep top half of max_candidates as backup
+                top_candidates.append(doc)
+
+        # Combine: exact matches first, then top candidates
+        filtered = exact_matches + top_candidates
+
+        # Limit to max_candidates
+        filtered = filtered[:max_candidates]
+
+        logger.debug(f"[DOC_SEARCH] 🎯 Pre-filtered version candidates: {len(docs)} → {len(filtered)} "
+                    f"({len(exact_matches)} exact matches + {len(top_candidates)} top candidates)")
+
+        return filtered
 
     def search(
         self,
@@ -1554,6 +1755,11 @@ class HashiCorpDocSearchIndex:
             logger.error("[DOC_SEARCH] Vector store not initialized")
             return []
 
+        # Detect version-specific queries
+        version_info = self._detect_version_query(query)
+        # Store version info as instance variable so _rerank_results can access it
+        self._current_version_info = version_info
+
         # Expand query with domain synonyms (if enabled)
         original_query = query
         query = self._expand_query(query)
@@ -1566,7 +1772,13 @@ class HashiCorpDocSearchIndex:
             # Retrieve many more when filtering (product filter removes ~80% of results)
             # If re-ranking enabled, retrieve rerank_top_k candidates for re-scoring
             if self.enable_reranking:
-                k = self.rerank_top_k * 10 if product_filter else self.rerank_top_k
+                # For version queries, retrieve MORE candidates (20x instead of 10x = 1600 candidates)
+                # This ensures version-specific release notes have a better chance of being retrieved
+                if version_info and version_info.get('is_version_query'):
+                    k = self.rerank_top_k * 20 if product_filter else self.rerank_top_k * 2
+                    logger.debug(f"[DOC_SEARCH] ⚡ Version query detected: increased to {k} candidates (20x multiplier)")
+                else:
+                    k = self.rerank_top_k * 10 if product_filter else self.rerank_top_k
                 logger.debug(f"[DOC_SEARCH] Re-ranking enabled: retrieving {k} candidates for cross-encoder")
             else:
                 k = top_k * 10 if product_filter else top_k * 3
@@ -1584,6 +1796,10 @@ class HashiCorpDocSearchIndex:
                 docs = [d for d in docs if d.metadata.get("product", "").lower() == product_filter.lower()]
                 logger.debug(f"[DOC_SEARCH] After product filter ({product_filter}): {len(docs)} docs (removed {before_filter - len(docs)})")
 
+            # Pre-filter for version queries to reduce re-ranking time
+            if version_info and version_info.get('is_version_query') and self.enable_reranking:
+                docs = self._prefilter_version_candidates(docs, version_info, max_candidates=100)
+
             # Format results (ensemble doesn't return scores, so assign based on rank)
             results = []
             for idx, doc in enumerate(docs):
@@ -1600,6 +1816,11 @@ class HashiCorpDocSearchIndex:
                 if "validated-designs" in base_url:
                     # Modest boost for authoritative docs (1.15x = 15% boost)
                     rank_score = rank_score * 1.15
+
+                # Boost release notes URLs (version-specific documentation)
+                if "/release-notes/" in base_url or "/releases/" in base_url or "/updates/release-notes" in base_url:
+                    # Strong boost for release notes (2.0x = 100% boost)
+                    rank_score = rank_score * 2.0
 
                 # Cap at 1.0 for cleaner presentation
                 rank_score = min(1.0, rank_score)
