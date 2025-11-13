@@ -27,6 +27,9 @@ import config
 from tools import ALL_TOOLS
 from hashicorp_doc_search import initialize_doc_search
 
+# Gemini imports (lazy loaded when needed)
+_gemini_client = None
+
 
 app = Flask(__name__)
 CORS(app)
@@ -95,8 +98,134 @@ def get_backend_endpoint() -> str:
         return config.LMSTUDIO_ENDPOINT
     elif config.BACKEND_TYPE == "ollama":
         return config.OLLAMA_ENDPOINT
+    elif config.BACKEND_TYPE == "gemini":
+        return "gemini"  # Gemini uses SDK, not HTTP endpoint
     else:
         raise ValueError(f"Unknown backend type: {config.BACKEND_TYPE}")
+
+
+def get_gemini_client():
+    """Get or create the Gemini client (lazy loaded)."""
+    global _gemini_client
+    if _gemini_client is None:
+        from google import genai
+        from google.genai.types import HttpOptions
+
+        # Set environment variables for Vertex AI if configured
+        if config.GOOGLE_GENAI_USE_VERTEXAI.lower() in ("true", "1", "yes"):
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
+        if config.GOOGLE_CLOUD_PROJECT:
+            os.environ["GOOGLE_CLOUD_PROJECT"] = config.GOOGLE_CLOUD_PROJECT
+        if config.GOOGLE_CLOUD_LOCATION:
+            os.environ["GOOGLE_CLOUD_LOCATION"] = config.GOOGLE_CLOUD_LOCATION
+
+        # Create client with v1 API
+        _gemini_client = genai.Client(
+            http_options=HttpOptions(api_version="v1")
+        )
+
+    return _gemini_client
+
+
+def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0) -> Dict[str, Any]:
+    """Call Gemini with tool support using the Google Gen AI SDK."""
+    from google import genai
+    from google.genai.types import Tool, FunctionDeclaration, GenerateContentConfig
+
+    client = get_gemini_client()
+
+    # Convert LangChain tools to Gemini function declarations
+    function_declarations = []
+    for tool in tools:
+        # Get schema using the appropriate method (pydantic v1 vs v2)
+        if hasattr(tool.args_schema, "model_json_schema"):
+            schema = tool.args_schema.model_json_schema()
+        elif hasattr(tool.args_schema, "schema"):
+            schema = tool.args_schema.schema()
+        else:
+            schema = {}
+
+        # Convert schema to Gemini format
+        parameters = {
+            "type": schema.get("type", "object"),
+            "properties": schema.get("properties", {}),
+            "required": schema.get("required", [])
+        }
+
+        function_declarations.append(
+            FunctionDeclaration(
+                name=tool.name,
+                description=tool.description,
+                parameters=parameters
+            )
+        )
+
+    # Create tools config
+    gemini_tools = [Tool(function_declarations=function_declarations)] if function_declarations else []
+
+    # Create generation config
+    config_obj = GenerateContentConfig(
+        tools=gemini_tools,
+        temperature=temperature
+    )
+
+    # Convert messages to Gemini format
+    # Gemini expects a simple list of content parts or a string
+    # For now, we'll combine all messages into a single prompt
+    # (System message is handled separately)
+    user_messages = [msg for msg in messages if msg["role"] != "system"]
+
+    # Build contents list for Gemini
+    contents = []
+    for msg in user_messages:
+        role = "user" if msg["role"] == "user" else "model"
+        if msg["role"] == "tool":
+            # Tool results need special handling
+            contents.append({
+                "role": "function",
+                "parts": [{"text": msg["content"]}]
+            })
+        else:
+            contents.append({
+                "role": role,
+                "parts": [{"text": msg["content"]}]
+            })
+
+    # Call Gemini API
+    response = client.models.generate_content(
+        model=config.BACKEND_MODEL,
+        contents=contents,
+        config=config_obj
+    )
+
+    # Convert response to OpenAI-like format
+    result = {
+        "message": {
+            "role": "assistant",
+            "content": ""
+        },
+        "tool_calls": []
+    }
+
+    if response.candidates and len(response.candidates) > 0:
+        candidate = response.candidates[0]
+        if candidate.content and candidate.content.parts:
+            for part in candidate.content.parts:
+                if hasattr(part, "text") and part.text:
+                    result["message"]["content"] += part.text
+                elif hasattr(part, "function_call") and part.function_call:
+                    # Convert function call to OpenAI format
+                    func_call = part.function_call
+                    result["tool_calls"].append({
+                        "id": f"call_{int(time.time())}",
+                        "type": "function",
+                        "function": {
+                            "name": func_call.name,
+                            "arguments": dict(func_call.args) if func_call.args else {}
+                        }
+                    })
+
+    return result
 
 
 def call_ollama_with_tools(messages: list, tools: list, temperature: float = 0.0, stream: bool = False) -> Any:
@@ -238,12 +367,79 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
         if config.BACKEND_TYPE == "ollama":
             response = call_ollama_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
             response_data = response.json()
+        elif config.BACKEND_TYPE == "gemini":
+            response_data = call_gemini_with_tools(full_messages, ALL_TOOLS, temperature)
         else:  # lmstudio
             response = call_lmstudio_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
             response_data = response.json()
 
+        # Handle Gemini response format
+        if config.BACKEND_TYPE == "gemini":
+            message = response_data.get("message", {})
+            tool_calls = response_data.get("tool_calls", [])
+
+            if not tool_calls:
+                # No tool calls, stream the final response
+                content = message.get("content", "")
+
+                # Stream the content in small chunks while preserving formatting
+                tokens = re.split(r'(\s+)', content)
+
+                for token in tokens:
+                    if token:  # Skip empty strings
+                        chunk = {
+                            "id": f"chatcmpl-{int(time.time())}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": config.IVAN_MODEL_NAME,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": token},
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+
+                # Send final chunk
+                final_chunk = {
+                    "id": f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": config.IVAN_MODEL_NAME,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                }
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # Add assistant message with tool calls to conversation
+            full_messages.append({
+                "role": "assistant",
+                "content": message.get("content", ""),
+                "tool_calls": tool_calls
+            })
+
+            # Execute tools and add results
+            for tool_call in tool_calls:
+                function = tool_call.get("function", {})
+                tool_name = function.get("name")
+                tool_args = function.get("arguments", {})
+
+                # Execute the tool
+                tool_result = execute_tool(tool_name, tool_args)
+
+                # Add tool result to messages
+                full_messages.append({
+                    "role": "tool",
+                    "content": tool_result
+                })
+
         # Handle Ollama response format
-        if config.BACKEND_TYPE == "ollama":
+        elif config.BACKEND_TYPE == "ollama":
             message = response_data.get("message", {})
             tool_calls = message.get("tool_calls", [])
 
@@ -399,12 +595,63 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
         if config.BACKEND_TYPE == "ollama":
             response = call_ollama_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
             response_data = response.json()
+        elif config.BACKEND_TYPE == "gemini":
+            response_data = call_gemini_with_tools(full_messages, ALL_TOOLS, temperature)
         else:  # lmstudio
             response = call_lmstudio_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
             response_data = response.json()
 
+        # Handle Gemini response format
+        if config.BACKEND_TYPE == "gemini":
+            message = response_data.get("message", {})
+            tool_calls = response_data.get("tool_calls", [])
+
+            if not tool_calls:
+                # No tool calls, return the final response
+                return {
+                    "id": f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": config.IVAN_MODEL_NAME,
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": message.get("content", "")
+                        },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0
+                    }
+                }
+
+            # Add assistant message with tool calls
+            full_messages.append({
+                "role": "assistant",
+                "content": message.get("content", ""),
+                "tool_calls": tool_calls
+            })
+
+            # Execute tools and add results
+            for tool_call in tool_calls:
+                function = tool_call.get("function", {})
+                tool_name = function.get("name")
+                tool_args = function.get("arguments", {})
+
+                # Execute the tool
+                tool_result = execute_tool(tool_name, tool_args)
+
+                # Add tool result to messages
+                full_messages.append({
+                    "role": "tool",
+                    "content": tool_result
+                })
+
         # Handle Ollama response format
-        if config.BACKEND_TYPE == "ollama":
+        elif config.BACKEND_TYPE == "ollama":
             message = response_data.get("message", {})
             tool_calls = message.get("tool_calls", [])
 
@@ -640,7 +887,7 @@ def signal_handler(sig, frame):
 
 @click.command()
 @click.option("--port", default=config.DEFAULT_PORT, help="Port to run Ivan on")
-@click.option("--backend", type=click.Choice(["ollama", "lmstudio"]), default=config.BACKEND_TYPE, help="Backend to use")
+@click.option("--backend", type=click.Choice(["ollama", "lmstudio", "gemini"]), default=config.BACKEND_TYPE, help="Backend to use")
 @click.option("--model", default=config.BACKEND_MODEL, help="Model name to use with backend")
 @click.option("--no-webui", is_flag=True, help="Don't start Open Web UI")
 @click.option("--rebuild-index", is_flag=True, help="Force rebuild of HashiCorp documentation index")

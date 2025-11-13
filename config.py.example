@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Backend configuration
-BACKEND_TYPE: Literal["lmstudio", "ollama"] = os.getenv("IVAN_BACKEND", "lmstudio")
+BACKEND_TYPE: Literal["lmstudio", "ollama", "gemini"] = os.getenv("IVAN_BACKEND", "gemini")
 
 # LM Studio default endpoint
 LMSTUDIO_ENDPOINT = os.getenv("LMSTUDIO_ENDPOINT", "http://localhost:1234/v1")
@@ -18,8 +18,16 @@ OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
 # Ollama Search API key (optional - enables web search via Ollama)
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
 
+# Gemini/Vertex AI configuration
+# Uses application default credentials via: gcloud auth application-default login
+# Set GOOGLE_GENAI_USE_VERTEXAI=True to use Vertex AI with ADC
+# Set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION for your GCP project
+GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+GOOGLE_GENAI_USE_VERTEXAI = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "True")
+
 # Model name to use with the backend
-BACKEND_MODEL = os.getenv("BACKEND_MODEL", "openai/gpt-oss-20b")
+BACKEND_MODEL = os.getenv("BACKEND_MODEL", "gemini-2.5-pro")
 
 # Ivan configuration
 DEFAULT_PORT = int(os.getenv("IVAN_PORT", "8000"))
