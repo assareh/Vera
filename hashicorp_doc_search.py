@@ -105,9 +105,11 @@ class HashiCorpDocSearchIndex:
         max_pages: Optional[int] = None,  # For testing, limit pages crawled
         rate_limit_delay: float = 0.1,  # Delay between requests (seconds) - increased for rate limiting
         max_workers: int = 5,  # Parallel workers for fetching - reduced to avoid rate limits
-        enable_reranking: bool = True,  # Enable cross-encoder re-ranking
-        rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",  # Cross-encoder model
-        rerank_top_k: int = 80,  # Number of results to re-rank (retrieves 10x this when filtering by product = 800 candidates)
+        enable_reranking: bool = True,  # Enable two-stage cross-encoder re-ranking
+        rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",  # Heavy cross-encoder (final ranking)
+        light_rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",  # Lightweight cross-encoder (first pass)
+        rerank_top_k: int = 80,  # Candidates for final heavy reranking
+        light_rerank_top_k: int = 80,  # Candidates after lightweight reranking (reduces from ~535 to 80)
         enable_query_expansion: bool = False,  # Enable query expansion with domain synonyms (disabled - too aggressive for technical queries)
         max_expansion_terms: int = 1  # Max number of expansion terms to add per keyword
     ):
@@ -122,10 +124,12 @@ class HashiCorpDocSearchIndex:
             max_pages: Maximum pages to crawl (None = unlimited, for testing)
             rate_limit_delay: Delay between HTTP requests to be respectful
             max_workers: Number of parallel workers for fetching pages
-            enable_reranking: Enable cross-encoder re-ranking (default: True)
-            rerank_model: Cross-encoder model for re-ranking
-            rerank_top_k: Number of results to retrieve for re-ranking
-            enable_query_expansion: Enable query expansion with domain synonyms (default: True)
+            enable_reranking: Enable two-stage cross-encoder re-ranking (default: True)
+            rerank_model: Heavy cross-encoder model for final ranking (L-12)
+            light_rerank_model: Lightweight cross-encoder model for first pass (L-6)
+            rerank_top_k: Number of candidates for final heavy reranking
+            light_rerank_top_k: Number of candidates after lightweight reranking
+            enable_query_expansion: Enable query expansion with domain synonyms (default: False)
             max_expansion_terms: Max number of expansion terms to add per keyword
         """
         self.cache_dir = Path(cache_dir)
@@ -154,7 +158,9 @@ class HashiCorpDocSearchIndex:
         # Re-ranking configuration
         self.enable_reranking = enable_reranking
         self.rerank_model = rerank_model
+        self.light_rerank_model = light_rerank_model
         self.rerank_top_k = rerank_top_k
+        self.light_rerank_top_k = light_rerank_top_k
 
         # Query expansion configuration
         self.enable_query_expansion = enable_query_expansion
@@ -167,7 +173,8 @@ class HashiCorpDocSearchIndex:
         self.bm25_retriever: Optional[BM25Retriever] = None
         self.ensemble_retriever: Optional[EnsembleRetriever] = None
         self.chunks: Optional[List[Document]] = None  # Store chunks for BM25
-        self.cross_encoder: Optional[CrossEncoder] = None  # Cross-encoder for re-ranking
+        self.cross_encoder: Optional[CrossEncoder] = None  # Heavy cross-encoder (L-12) for final ranking
+        self.light_cross_encoder: Optional[CrossEncoder] = None  # Lightweight cross-encoder (L-6) for first pass
 
         # Parent-child chunking storage
         self.parent_chunks: Dict[str, Dict[str, Any]] = {}  # chunk_id -> parent content/metadata
@@ -1361,9 +1368,14 @@ class HashiCorpDocSearchIndex:
             )
 
         if self.enable_reranking and self.cross_encoder is None:
-            logger.info(f"[DOC_SEARCH] Loading cross-encoder model for re-ranking: {self.rerank_model}")
+            logger.info(f"[DOC_SEARCH] Loading heavy cross-encoder for final ranking: {self.rerank_model}")
             self.cross_encoder = CrossEncoder(self.rerank_model)
-            logger.info(f"[DOC_SEARCH] Cross-encoder loaded (will re-rank top-{self.rerank_top_k} results)")
+            logger.info(f"[DOC_SEARCH] Heavy cross-encoder (L-12) loaded")
+
+        if self.enable_reranking and self.light_cross_encoder is None:
+            logger.info(f"[DOC_SEARCH] Loading lightweight cross-encoder for first-pass ranking: {self.light_rerank_model}")
+            self.light_cross_encoder = CrossEncoder(self.light_rerank_model)
+            logger.info(f"[DOC_SEARCH] Lightweight cross-encoder (L-6) loaded (will reduce candidates to {self.light_rerank_top_k})")
 
     def _build_index(self, url_list: List[Dict[str, str]]):
         """Build FAISS index using LangChain with resume capability.
@@ -1730,6 +1742,45 @@ class HashiCorpDocSearchIndex:
 
         return filtered
 
+    def _light_rerank(self, query: str, results: List[Dict[str, Any]], top_k: int = 80) -> List[Dict[str, Any]]:
+        """Fast first-pass reranking using lightweight cross-encoder.
+
+        Reduces candidate count before heavy cross-encoder reranking.
+        This is the first stage of two-stage reranking (Phase 2).
+
+        Args:
+            query: Search query
+            results: List of search results to rerank
+            top_k: Number of top results to keep
+
+        Returns:
+            Top k results after lightweight reranking
+        """
+        if not self.light_cross_encoder or not results:
+            return results
+
+        logger.debug(f"[DOC_SEARCH] 🔸 Stage 1: Lightweight reranking {len(results)} results → top {top_k}")
+
+        # Prepare query-document pairs for scoring
+        pairs = [[query, result['text']] for result in results]
+
+        # Score all pairs with lightweight model (fast)
+        scores = self.light_cross_encoder.predict(pairs)
+
+        # Update results with lightweight scores
+        for result, score in zip(results, scores):
+            result['light_rerank_score'] = float(score)
+
+        # Sort by lightweight scores (descending)
+        reranked = sorted(results, key=lambda x: x['light_rerank_score'], reverse=True)
+
+        # Return top k
+        top_results = reranked[:top_k]
+
+        logger.debug(f"[DOC_SEARCH] ✓ Stage 1 complete: kept top {len(top_results)} candidates")
+
+        return top_results
+
     def search(
         self,
         query: str,
@@ -1856,10 +1907,15 @@ class HashiCorpDocSearchIndex:
 
             logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} results (max 2 sections per page)")
 
-            # Apply cross-encoder re-ranking if enabled
-            if self.enable_reranking and self.cross_encoder:
-                # Re-rank before limiting to top_k (use original query for cross-encoder)
-                results = self._rerank_results(original_query, results)
+            # Apply two-stage re-ranking if enabled (Phase 2)
+            if self.enable_reranking:
+                # Stage 1: Lightweight reranking to reduce candidates (e.g., 535 → 80)
+                if self.light_cross_encoder:
+                    results = self._light_rerank(original_query, results, top_k=self.light_rerank_top_k)
+
+                # Stage 2: Heavy reranking for final ranking (e.g., 80 → top_k)
+                if self.cross_encoder:
+                    results = self._rerank_results(original_query, results)
 
             # Limit to top_k after re-ranking
             results = results[:top_k]
@@ -1933,10 +1989,15 @@ class HashiCorpDocSearchIndex:
 
             logger.debug(f"[DOC_SEARCH] After deduplication: {len(results)} results (max 2 sections per page)")
 
-            # Apply cross-encoder re-ranking if enabled
-            if self.enable_reranking and self.cross_encoder:
-                # Re-rank before limiting to top_k (use original query for cross-encoder)
-                results = self._rerank_results(original_query, results)
+            # Apply two-stage re-ranking if enabled (Phase 2)
+            if self.enable_reranking:
+                # Stage 1: Lightweight reranking to reduce candidates (e.g., 535 → 80)
+                if self.light_cross_encoder:
+                    results = self._light_rerank(original_query, results, top_k=self.light_rerank_top_k)
+
+                # Stage 2: Heavy reranking for final ranking (e.g., 80 → top_k)
+                if self.cross_encoder:
+                    results = self._rerank_results(original_query, results)
 
             # Limit to top_k after re-ranking
             results = results[:top_k]
