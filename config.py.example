@@ -31,6 +31,7 @@ BACKEND_MODEL = os.getenv("BACKEND_MODEL", "gemini-2.5-pro")
 
 # Ivan configuration
 DEFAULT_PORT = int(os.getenv("IVAN_PORT", "8000"))
+WEBUI_PORT = int(os.getenv("WEBUI_PORT", "8080"))  # Starting port for Open Web UI (auto-increments if in use)
 DEFAULT_TEMPERATURE = float(os.getenv("IVAN_TEMPERATURE", "0.0"))
 SYSTEM_PROMPT_PATH = os.getenv("SYSTEM_PROMPT_PATH", "system_prompt.md")
 

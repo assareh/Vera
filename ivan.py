@@ -817,6 +817,26 @@ def index_status():
     return jsonify(status)
 
 
+def is_port_available(port: int) -> bool:
+    """Check if a port is available for binding."""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))
+            return True
+    except OSError:
+        return False
+
+
+def find_available_port(starting_port: int, max_attempts: int = 10) -> int:
+    """Find an available port starting from the given port."""
+    for i in range(max_attempts):
+        port = starting_port + i
+        if is_port_available(port):
+            return port
+    raise RuntimeError(f"Could not find available port starting from {starting_port}")
+
+
 def start_webui(port: int):
     """Start Open Web UI as a subprocess."""
     global _webui_process
@@ -833,13 +853,15 @@ def start_webui(port: int):
                 return
             openwebui_cmd = "open-webui"
 
-        webui_port = port + 1
+        # Find an available port starting from the configured WEBUI_PORT
+        webui_port = find_available_port(config.WEBUI_PORT)
         print(f"Starting Open Web UI on port {webui_port}...")
 
         # Set up environment variables for Open Web UI to auto-discover Ivan
         env = os.environ.copy()
         env["OPENAI_API_BASE_URLS"] = f"http://localhost:{port}/v1"
         env["OPENAI_API_KEYS"] = "sk-ivan"  # Dummy key, not required by Ivan
+        env["DEFAULT_MODELS"] = config.IVAN_MODEL_NAME  # Set wwtfo/ivan as default model
 
         # Set custom prompt suggestions for SE workflows
         # Note: title must be an array of strings per Open Web UI docs
@@ -858,8 +880,6 @@ def start_webui(port: int):
             }
         ])
         env["DEFAULT_PROMPT_SUGGESTIONS"] = suggestions
-        # Disable persistent config so env vars are read every time
-        env["ENABLE_PERSISTENT_CONFIG"] = "False"
 
         # Start open-webui
         _webui_process = subprocess.Popen(
