@@ -10,7 +10,7 @@ version = "0.1.0"
 description = "HashiCorp documentation assistant with semantic search"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Ivan Contributors"}
 ]
@@ -45,6 +45,12 @@ dev = ["pytest", "black", "ruff", "mypy"]
 Homepage = "https://github.com/assareh/ivan"
 Repository = "https://github.com/assareh/ivan"
 Issues = "https://github.com/assareh/ivan/issues"
+
+[tool.setuptools]
+py-modules = ["ivan", "config", "tools", "hashicorp_doc_search", "chunking_utils", "data_storage"]
+
+[tool.setuptools.packages.find]
+exclude = ["branding*", "deprecated*", "hashicorp_web_docs*", "benchmark_results*", "docs*", "tests*", "roadmap*", "ivan-extension*"]
 
 [tool.black]
 line-length = 120
