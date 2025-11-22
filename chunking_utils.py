@@ -11,46 +11,59 @@ Key Features:
 - Metadata extraction (product, version, doc_type)
 """
 
-import re
 import hashlib
-import tiktoken
-from typing import Dict, List, Any, Optional, Tuple
-from bs4 import BeautifulSoup, NavigableString
+import re
 from dataclasses import dataclass, replace
+from typing import Any
+
+import tiktoken
+from bs4 import BeautifulSoup, NavigableString
 
 # Initialize tokenizer (cl100k_base is used by GPT-4, GPT-3.5-turbo)
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
 # Boilerplate CSS selectors to skip
 BOILERPLATE_SELECTORS = [
-    'nav', 'aside', 'footer', 'header',
-    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
-    '[aria-label*="breadcrumb"]', '[aria-label*="navigation"]',
-    '.edit-on-github', '.copy-button', '.toc', '.table-of-contents',
-    '.nav', '.navbar', '.sidebar', '.footer', '.header',
-    'button[class*="copy"]', 'a[class*="edit"]'
+    "nav",
+    "aside",
+    "footer",
+    "header",
+    '[role="navigation"]',
+    '[role="banner"]',
+    '[role="contentinfo"]',
+    '[aria-label*="breadcrumb"]',
+    '[aria-label*="navigation"]',
+    ".edit-on-github",
+    ".copy-button",
+    ".toc",
+    ".table-of-contents",
+    ".nav",
+    ".navbar",
+    ".sidebar",
+    ".footer",
+    ".header",
+    'button[class*="copy"]',
+    'a[class*="edit"]',
 ]
 
 # HashiCorp products
-HASHICORP_PRODUCTS = [
-    'vault', 'consul', 'nomad', 'terraform', 'boundary',
-    'waypoint', 'packer', 'vagrant', 'sentinel'
-]
+HASHICORP_PRODUCTS = ["vault", "consul", "nomad", "terraform", "boundary", "waypoint", "packer", "vagrant", "sentinel"]
 
 
 @dataclass
 class ChunkMetadata:
     """Metadata for a document chunk"""
-    heading_path: List[str]
+
+    heading_path: list[str]
     heading_path_joined: str
     section_id: str
     url: str
     product: str
     doc_type: str
-    version: Optional[str]
+    version: str | None
     code_identifiers: str
     is_parent: bool
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
 
 
 def count_tokens(text: str) -> int:
@@ -74,8 +87,8 @@ def semantic_chunk_html(
     child_max_tokens: int = 350,
     parent_min_tokens: int = 300,
     parent_max_tokens: int = 900,
-    absolute_max_tokens: int = 1200
-) -> Dict[str, List[Dict[str, Any]]]:
+    absolute_max_tokens: int = 1200,
+) -> dict[str, list[dict[str, Any]]]:
     """Chunk HTML into parent-child structure using heading hierarchy.
 
     Args:
@@ -90,7 +103,7 @@ def semantic_chunk_html(
     Returns:
         Dictionary with 'parents' and 'children' lists
     """
-    soup = BeautifulSoup(html, 'html.parser')
+    soup = BeautifulSoup(html, "html.parser")
 
     # Remove boilerplate elements
     for selector in BOILERPLATE_SELECTORS:
@@ -99,21 +112,21 @@ def semantic_chunk_html(
 
     # Find main content container
     main = (
-        soup.find('main') or
-        soup.find('article') or
-        soup.find('div', class_='content') or
-        soup.find('div', id='content') or
-        soup.body
+        soup.find("main")
+        or soup.find("article")
+        or soup.find("div", class_="content")
+        or soup.find("div", id="content")
+        or soup.body
     )
 
     if not main:
-        return {'parents': [], 'children': []}
+        return {"parents": [], "children": []}
 
     # Try to find the actual content div inside main (HashiCorp docs have nested structure)
     content_container = (
-        main.find('div', class_=lambda x: x and ('mdxContent' in ' '.join(x) or 'markdown' in ' '.join(x).lower())) or
-        main.find('div', class_=lambda x: x and 'content' in ' '.join(x).lower()) or
-        main
+        main.find("div", class_=lambda x: x and ("mdxContent" in " ".join(x) or "markdown" in " ".join(x).lower()))
+        or main.find("div", class_=lambda x: x and "content" in " ".join(x).lower())
+        or main
     )
 
     parents = []
@@ -133,7 +146,7 @@ def semantic_chunk_html(
                 continue
             # If we have a current section and this is meaningful text, add it
             if current_section and elem.strip():
-                current_section['content_blocks'].append(elem.strip())
+                current_section["content_blocks"].append(elem.strip())
             continue
 
         # Skip if already processed
@@ -141,91 +154,93 @@ def semantic_chunk_html(
             continue
         processed_elements.add(id(elem))
 
-        if elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+        if elem.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
             # Finalize previous section if exists
             if current_section:
                 finalize_section(
-                    current_section, parents, children, url, heading_stack,
-                    child_min_tokens, child_max_tokens,
-                    parent_min_tokens, parent_max_tokens,
-                    absolute_max_tokens
+                    current_section,
+                    parents,
+                    children,
+                    url,
+                    heading_stack,
+                    child_min_tokens,
+                    child_max_tokens,
+                    parent_min_tokens,
+                    parent_max_tokens,
+                    absolute_max_tokens,
                 )
 
             # Update heading stack (pop levels >= current level)
             level = int(elem.name[1])
-            while heading_stack and heading_stack[-1]['level'] >= level:
+            while heading_stack and heading_stack[-1]["level"] >= level:
                 heading_stack.pop()
 
             # Add current heading to stack
             heading_text = elem.get_text().strip()
-            heading_id = elem.get('id', slugify(heading_text))
+            heading_id = elem.get("id", slugify(heading_text))
 
-            heading_stack.append({
-                'level': level,
-                'text': heading_text,
-                'id': heading_id
-            })
+            heading_stack.append({"level": level, "text": heading_text, "id": heading_id})
 
             # Start new section
             current_section = {
-                'heading_stack': list(heading_stack),  # Copy current stack
-                'content_blocks': [],
-                'code_blocks': [],
-                'tables': []
+                "heading_stack": list(heading_stack),  # Copy current stack
+                "content_blocks": [],
+                "code_blocks": [],
+                "tables": [],
             }
 
-        elif elem.name == 'pre':
+        elif elem.name == "pre":
             # Code block (often contains <code> inside)
             if current_section:
-                code = elem.find('code')
+                code = elem.find("code")
                 if code:
-                    lang = code.get('class', [''])[0].replace('language-', '') if code.get('class') else ''
-                    current_section['code_blocks'].append({
-                        'lang': lang,
-                        'code': code.get_text()
-                    })
+                    lang = code.get("class", [""])[0].replace("language-", "") if code.get("class") else ""
+                    current_section["code_blocks"].append({"lang": lang, "code": code.get_text()})
                 else:
-                    current_section['code_blocks'].append({
-                        'lang': '',
-                        'code': elem.get_text()
-                    })
+                    current_section["code_blocks"].append({"lang": "", "code": elem.get_text()})
 
-        elif elem.name == 'table':
+        elif elem.name == "table":
             # Table - keep atomic
             if current_section:
-                table_text = elem.get_text(separator=' ', strip=True)
-                current_section['tables'].append(table_text)
+                table_text = elem.get_text(separator=" ", strip=True)
+                current_section["tables"].append(table_text)
 
-        elif elem.name in ['p', 'div', 'ul', 'ol', 'dl', 'blockquote']:
+        elif elem.name in ["p", "div", "ul", "ol", "dl", "blockquote"]:
             # Content blocks
             if current_section:
-                text = elem.get_text(separator=' ', strip=True)
+                text = elem.get_text(separator=" ", strip=True)
                 if text:  # Only add non-empty content
-                    current_section['content_blocks'].append(text)
+                    current_section["content_blocks"].append(text)
 
     # Finalize last section
     if current_section:
         finalize_section(
-            current_section, parents, children, url, heading_stack,
-            child_min_tokens, child_max_tokens,
-            parent_min_tokens, parent_max_tokens,
-            absolute_max_tokens
+            current_section,
+            parents,
+            children,
+            url,
+            heading_stack,
+            child_min_tokens,
+            child_max_tokens,
+            parent_min_tokens,
+            parent_max_tokens,
+            absolute_max_tokens,
         )
 
-    return {'parents': parents, 'children': children}
+    return {"parents": parents, "children": children}
 
 
 def finalize_section(
-    section: Dict[str, Any],
-    parents: List[Dict[str, Any]],
-    children: List[Dict[str, Any]],
+    section: dict[str, Any],
+    parents: list[dict[str, Any]],
+    children: list[dict[str, Any]],
     url: str,
-    heading_stack: List[Dict[str, str]],
+    heading_stack: list[dict[str, str]],
     child_min_tokens: int,
     child_max_tokens: int,
     parent_min_tokens: int,
     parent_max_tokens: int,
-    absolute_max_tokens: int
+    absolute_max_tokens: int,
 ):
     """Create parent chunk and child chunks from a section.
 
@@ -242,33 +257,33 @@ def finalize_section(
         absolute_max_tokens: Absolute maximum tokens
     """
     # Build heading path
-    heading_path = [h['text'] for h in section['heading_stack']]
-    section_id = section['heading_stack'][-1]['id'] if section['heading_stack'] else 'root'
+    heading_path = [h["text"] for h in section["heading_stack"]]
+    section_id = section["heading_stack"][-1]["id"] if section["heading_stack"] else "root"
 
     # Combine all content
     all_text_parts = []
 
     # Add content blocks (paragraphs, lists, etc.)
-    for content in section.get('content_blocks', []):
+    for content in section.get("content_blocks", []):
         if content and len(content.strip()) > 20:  # Skip tiny fragments
             all_text_parts.append(content.strip())
 
     # Add code blocks with markdown formatting
-    for code_data in section.get('code_blocks', []):
-        lang = code_data.get('lang', 'text')
-        code = code_data.get('code', '').strip()
+    for code_data in section.get("code_blocks", []):
+        lang = code_data.get("lang", "text")
+        code = code_data.get("code", "").strip()
         if code:
             all_text_parts.append(f"```{lang}\n{code}\n```")
 
     # Add tables
-    for table_text in section.get('tables', []):
+    for table_text in section.get("tables", []):
         if table_text and len(table_text.strip()) > 20:
             all_text_parts.append(table_text.strip())
 
     if not all_text_parts:
         return  # Empty section, skip
 
-    all_text = '\n\n'.join(all_text_parts)
+    all_text = "\n\n".join(all_text_parts)
     tokens = count_tokens(all_text)
 
     canonical_url = canonicalize_url(url)
@@ -279,7 +294,7 @@ def finalize_section(
         section_id=section_id,
         url=canonical_url,
         content=all_text,
-        code_blocks=section.get('code_blocks', [])
+        code_blocks=section.get("code_blocks", []),
     )
 
     # Create parent chunk(s)
@@ -288,40 +303,43 @@ def finalize_section(
         parent_id = generate_chunk_id(canonical_url, heading_path, 0)
 
         parent_chunk = {
-            'chunk_id': parent_id,
-            'content': all_text,
-            'tokens': tokens,
-            'metadata': replace(metadata, is_parent=True)
+            "chunk_id": parent_id,
+            "content": all_text,
+            "tokens": tokens,
+            "metadata": replace(metadata, is_parent=True),
         }
         parents.append(parent_chunk)
 
         # Create child chunks from this parent
-        create_children_from_section(
-            section, parent_id, children, metadata,
-            child_min_tokens, child_max_tokens
-        )
+        create_children_from_section(section, parent_id, children, metadata, child_min_tokens, child_max_tokens)
 
     else:
         # Split large section on paragraph/block boundaries
         split_large_section(
-            all_text_parts, canonical_url, heading_path, metadata,
-            parents, children,
-            child_min_tokens, child_max_tokens,
-            parent_max_tokens, absolute_max_tokens
+            all_text_parts,
+            canonical_url,
+            heading_path,
+            metadata,
+            parents,
+            children,
+            child_min_tokens,
+            child_max_tokens,
+            parent_max_tokens,
+            absolute_max_tokens,
         )
 
 
 def split_large_section(
-    text_parts: List[str],
+    text_parts: list[str],
     canonical_url: str,
-    heading_path: List[str],
+    heading_path: list[str],
     metadata: ChunkMetadata,
-    parents: List[Dict[str, Any]],
-    children: List[Dict[str, Any]],
+    parents: list[dict[str, Any]],
+    children: list[dict[str, Any]],
     child_min_tokens: int,
     child_max_tokens: int,
     parent_max_tokens: int,
-    absolute_max_tokens: int
+    absolute_max_tokens: int,
 ):
     """Split a large section into multiple parent chunks on paragraph boundaries.
 
@@ -349,9 +367,15 @@ def split_large_section(
             # Flush current if exists
             if current_parts:
                 flush_parent_chunk(
-                    current_parts, canonical_url, heading_path, sub_idx,
-                    metadata, parents, children,
-                    child_min_tokens, child_max_tokens
+                    current_parts,
+                    canonical_url,
+                    heading_path,
+                    sub_idx,
+                    metadata,
+                    parents,
+                    children,
+                    child_min_tokens,
+                    child_max_tokens,
                 )
                 current_parts = []
                 current_tokens = 0
@@ -359,9 +383,16 @@ def split_large_section(
 
             # Split the oversized part on sentence boundaries
             split_oversized_part(
-                part, canonical_url, heading_path, sub_idx,
-                metadata, parents, children,
-                child_min_tokens, child_max_tokens, parent_max_tokens
+                part,
+                canonical_url,
+                heading_path,
+                sub_idx,
+                metadata,
+                parents,
+                children,
+                child_min_tokens,
+                child_max_tokens,
+                parent_max_tokens,
             )
             sub_idx += 1
             continue
@@ -370,9 +401,15 @@ def split_large_section(
         if current_tokens + part_tokens > parent_max_tokens and current_parts:
             # Flush current parent
             flush_parent_chunk(
-                current_parts, canonical_url, heading_path, sub_idx,
-                metadata, parents, children,
-                child_min_tokens, child_max_tokens
+                current_parts,
+                canonical_url,
+                heading_path,
+                sub_idx,
+                metadata,
+                parents,
+                children,
+                child_min_tokens,
+                child_max_tokens,
             )
             current_parts = [part]
             current_tokens = part_tokens
@@ -384,22 +421,28 @@ def split_large_section(
     # Flush final parent
     if current_parts:
         flush_parent_chunk(
-            current_parts, canonical_url, heading_path, sub_idx,
-            metadata, parents, children,
-            child_min_tokens, child_max_tokens
+            current_parts,
+            canonical_url,
+            heading_path,
+            sub_idx,
+            metadata,
+            parents,
+            children,
+            child_min_tokens,
+            child_max_tokens,
         )
 
 
 def flush_parent_chunk(
-    text_parts: List[str],
+    text_parts: list[str],
     canonical_url: str,
-    heading_path: List[str],
+    heading_path: list[str],
     sub_idx: int,
     metadata: ChunkMetadata,
-    parents: List[Dict[str, Any]],
-    children: List[Dict[str, Any]],
+    parents: list[dict[str, Any]],
+    children: list[dict[str, Any]],
     child_min_tokens: int,
-    child_max_tokens: int
+    child_max_tokens: int,
 ):
     """Create a parent chunk and its children from text parts.
 
@@ -414,16 +457,16 @@ def flush_parent_chunk(
         child_min_tokens: Min tokens for children
         child_max_tokens: Max tokens for children
     """
-    content = '\n\n'.join(text_parts)
+    content = "\n\n".join(text_parts)
     tokens = count_tokens(content)
     parent_id = generate_chunk_id(canonical_url, heading_path, sub_idx)
 
     parent_chunk = {
-        'chunk_id': parent_id,
-        'content': content,
-        'tokens': tokens,
-        'metadata': replace(metadata, is_parent=True),
-        'sub_chunk': sub_idx
+        "chunk_id": parent_id,
+        "content": content,
+        "tokens": tokens,
+        "metadata": replace(metadata, is_parent=True),
+        "sub_chunk": sub_idx,
     }
     parents.append(parent_chunk)
 
@@ -432,11 +475,11 @@ def flush_parent_chunk(
         part_tokens = count_tokens(part)
         if child_min_tokens <= part_tokens <= child_max_tokens:
             child_chunk = {
-                'chunk_id': generate_chunk_id(canonical_url, heading_path, f"{sub_idx}_child_{len(children)}"),
-                'parent_id': parent_id,
-                'content': part,
-                'tokens': part_tokens,
-                'metadata': replace(metadata, is_parent=False, parent_id=parent_id)
+                "chunk_id": generate_chunk_id(canonical_url, heading_path, f"{sub_idx}_child_{len(children)}"),
+                "parent_id": parent_id,
+                "content": part,
+                "tokens": part_tokens,
+                "metadata": replace(metadata, is_parent=False, parent_id=parent_id),
             }
             children.append(child_chunk)
 
@@ -444,14 +487,14 @@ def flush_parent_chunk(
 def split_oversized_part(
     text: str,
     canonical_url: str,
-    heading_path: List[str],
+    heading_path: list[str],
     sub_idx: int,
     metadata: ChunkMetadata,
-    parents: List[Dict[str, Any]],
-    children: List[Dict[str, Any]],
+    parents: list[dict[str, Any]],
+    children: list[dict[str, Any]],
     child_min_tokens: int,
     child_max_tokens: int,
-    parent_max_tokens: int
+    parent_max_tokens: int,
 ):
     """Split an oversized text part on sentence boundaries.
 
@@ -468,7 +511,7 @@ def split_oversized_part(
         parent_max_tokens: Max tokens for parents
     """
     # Split on sentence boundaries
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = re.split(r"(?<=[.!?])\s+", text)
 
     current_text = ""
     current_tokens = 0
@@ -481,22 +524,22 @@ def split_oversized_part(
             # Flush current chunk
             parent_id = generate_chunk_id(canonical_url, heading_path, f"{sub_idx}_{chunk_idx}")
             parent_chunk = {
-                'chunk_id': parent_id,
-                'content': current_text,
-                'tokens': current_tokens,
-                'metadata': replace(metadata, is_parent=True),
-                'sub_chunk': f"{sub_idx}_{chunk_idx}"
+                "chunk_id": parent_id,
+                "content": current_text,
+                "tokens": current_tokens,
+                "metadata": replace(metadata, is_parent=True),
+                "sub_chunk": f"{sub_idx}_{chunk_idx}",
             }
             parents.append(parent_chunk)
 
             # Create child if size is right
             if child_min_tokens <= current_tokens <= child_max_tokens:
                 child_chunk = {
-                    'chunk_id': generate_chunk_id(canonical_url, heading_path, f"{sub_idx}_{chunk_idx}_child"),
-                    'parent_id': parent_id,
-                    'content': current_text,
-                    'tokens': current_tokens,
-                    'metadata': replace(metadata, is_parent=False, parent_id=parent_id)
+                    "chunk_id": generate_chunk_id(canonical_url, heading_path, f"{sub_idx}_{chunk_idx}_child"),
+                    "parent_id": parent_id,
+                    "content": current_text,
+                    "tokens": current_tokens,
+                    "metadata": replace(metadata, is_parent=False, parent_id=parent_id),
                 }
                 children.append(child_chunk)
 
@@ -511,22 +554,22 @@ def split_oversized_part(
     if current_text:
         parent_id = generate_chunk_id(canonical_url, heading_path, f"{sub_idx}_{chunk_idx}")
         parent_chunk = {
-            'chunk_id': parent_id,
-            'content': current_text,
-            'tokens': current_tokens,
-            'metadata': replace(metadata, is_parent=True),
-            'sub_chunk': f"{sub_idx}_{chunk_idx}"
+            "chunk_id": parent_id,
+            "content": current_text,
+            "tokens": current_tokens,
+            "metadata": replace(metadata, is_parent=True),
+            "sub_chunk": f"{sub_idx}_{chunk_idx}",
         }
         parents.append(parent_chunk)
 
 
 def create_children_from_section(
-    section: Dict[str, Any],
+    section: dict[str, Any],
     parent_id: str,
-    children: List[Dict[str, Any]],
+    children: list[dict[str, Any]],
     metadata: ChunkMetadata,
     child_min_tokens: int,
-    child_max_tokens: int
+    child_max_tokens: int,
 ):
     """Create child chunks from section content blocks.
 
@@ -541,26 +584,26 @@ def create_children_from_section(
     child_idx = 0
 
     # Create children from content blocks (paragraphs, lists)
-    for content in section.get('content_blocks', []):
+    for content in section.get("content_blocks", []):
         if not content or len(content.strip()) < 20:
             continue
 
         tokens = count_tokens(content)
         if child_min_tokens <= tokens <= child_max_tokens:
             child_chunk = {
-                'chunk_id': f"{parent_id}_child_{child_idx}",
-                'parent_id': parent_id,
-                'content': content,
-                'tokens': tokens,
-                'metadata': replace(metadata, is_parent=False, parent_id=parent_id)
+                "chunk_id": f"{parent_id}_child_{child_idx}",
+                "parent_id": parent_id,
+                "content": content,
+                "tokens": tokens,
+                "metadata": replace(metadata, is_parent=False, parent_id=parent_id),
             }
             children.append(child_chunk)
             child_idx += 1
 
     # Create children from code blocks
-    for code_data in section.get('code_blocks', []):
-        lang = code_data.get('lang', 'text')
-        code = code_data.get('code', '').strip()
+    for code_data in section.get("code_blocks", []):
+        lang = code_data.get("lang", "text")
+        code = code_data.get("code", "").strip()
         if not code:
             continue
 
@@ -569,34 +612,34 @@ def create_children_from_section(
 
         if tokens <= child_max_tokens:
             child_chunk = {
-                'chunk_id': f"{parent_id}_child_{child_idx}",
-                'parent_id': parent_id,
-                'content': code_text,
-                'tokens': tokens,
-                'metadata': replace(metadata, is_parent=False, parent_id=parent_id)
+                "chunk_id": f"{parent_id}_child_{child_idx}",
+                "parent_id": parent_id,
+                "content": code_text,
+                "tokens": tokens,
+                "metadata": replace(metadata, is_parent=False, parent_id=parent_id),
             }
             children.append(child_chunk)
             child_idx += 1
 
     # Create children from tables (if not too large)
-    for table_text in section.get('tables', []):
+    for table_text in section.get("tables", []):
         if not table_text or len(table_text.strip()) < 20:
             continue
 
         tokens = count_tokens(table_text)
         if child_min_tokens <= tokens <= child_max_tokens:
             child_chunk = {
-                'chunk_id': f"{parent_id}_child_{child_idx}",
-                'parent_id': parent_id,
-                'content': table_text,
-                'tokens': tokens,
-                'metadata': replace(metadata, is_parent=False, parent_id=parent_id)
+                "chunk_id": f"{parent_id}_child_{child_idx}",
+                "parent_id": parent_id,
+                "content": table_text,
+                "tokens": tokens,
+                "metadata": replace(metadata, is_parent=False, parent_id=parent_id),
             }
             children.append(child_chunk)
             child_idx += 1
 
 
-def generate_chunk_id(canonical_url: str, heading_path: List[str], sub_idx: Any) -> str:
+def generate_chunk_id(canonical_url: str, heading_path: list[str], sub_idx: Any) -> str:
     """Generate stable chunk ID from URL, heading path, and sub-index.
 
     Args:
@@ -622,7 +665,7 @@ def canonicalize_url(url: str) -> str:
         Canonical URL
     """
     # Remove query params, trailing slash, anchors
-    url = url.split('?')[0].split('#')[0].rstrip('/')
+    url = url.split("?")[0].split("#")[0].rstrip("/")
     return url
 
 
@@ -636,8 +679,8 @@ def slugify(text: str) -> str:
         URL-safe slug
     """
     text = text.lower().strip()
-    text = re.sub(r'[^\w\s-]', '', text)
-    text = re.sub(r'[\s_]+', '-', text)
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_]+", "-", text)
     return text
 
 
@@ -652,12 +695,12 @@ def extract_product(url: str) -> str:
     """
     url_lower = url.lower()
     for product in HASHICORP_PRODUCTS:
-        if f'/{product}/' in url_lower or url_lower.startswith(f'https://developer.hashicorp.com/{product}'):
+        if f"/{product}/" in url_lower or url_lower.startswith(f"https://developer.hashicorp.com/{product}"):
             return product
-    return 'unknown'
+    return "unknown"
 
 
-def extract_version(heading_path: List[str], content: str) -> Optional[str]:
+def extract_version(heading_path: list[str], content: str) -> str | None:
     """Extract version number from heading or content.
 
     Args:
@@ -668,7 +711,7 @@ def extract_version(heading_path: List[str], content: str) -> Optional[str]:
         Version string or None
     """
     # Look for patterns like "1.20.0", "v1.20", "1.20.x"
-    version_pattern = r'v?(\d+\.\d+(?:\.\d+)?(?:\.x)?)'
+    version_pattern = r"v?(\d+\.\d+(?:\.\d+)?(?:\.x)?)"
 
     # Check headings first
     for heading in heading_path:
@@ -695,23 +738,23 @@ def detect_doc_type(url: str) -> str:
     """
     url_lower = url.lower()
 
-    if '/release-notes' in url_lower or '/updates' in url_lower or '/releases' in url_lower:
-        return 'release-notes'
-    elif '/api' in url_lower or '/api-docs' in url_lower:
-        return 'api'
-    elif '/tutorials' in url_lower:
-        return 'tutorial'
-    elif '/commands/' in url_lower or '/cli' in url_lower:
-        return 'cli'
-    elif '/validated-designs' in url_lower:
-        return 'validated-design'
-    elif '/docs/' in url_lower:
-        return 'docs'
+    if "/release-notes" in url_lower or "/updates" in url_lower or "/releases" in url_lower:
+        return "release-notes"
+    elif "/api" in url_lower or "/api-docs" in url_lower:
+        return "api"
+    elif "/tutorials" in url_lower:
+        return "tutorial"
+    elif "/commands/" in url_lower or "/cli" in url_lower:
+        return "cli"
+    elif "/validated-designs" in url_lower:
+        return "validated-design"
+    elif "/docs/" in url_lower:
+        return "docs"
     else:
-        return 'unknown'
+        return "unknown"
 
 
-def extract_code_identifiers(code_blocks: List[Dict[str, str]]) -> str:
+def extract_code_identifiers(code_blocks: list[dict[str, str]]) -> str:
     """Extract function names, variables, flags from code blocks.
 
     Args:
@@ -723,30 +766,26 @@ def extract_code_identifiers(code_blocks: List[Dict[str, str]]) -> str:
     identifiers = set()
 
     for code_data in code_blocks:
-        code = code_data.get('code', '')
+        code = code_data.get("code", "")
 
         # Extract function names (e.g., function_name(...))
-        funcs = re.findall(r'\b([a-z_][a-z0-9_]*)\s*\(', code, re.IGNORECASE)
+        funcs = re.findall(r"\b([a-z_][a-z0-9_]*)\s*\(", code, re.IGNORECASE)
         identifiers.update(funcs)
 
         # Extract CLI flags (e.g., --flag-name)
-        flags = re.findall(r'--([a-z][a-z0-9-]+)', code)
+        flags = re.findall(r"--([a-z][a-z0-9-]+)", code)
         identifiers.update(flags)
 
         # Extract env vars (e.g., VAULT_ADDR)
-        env_vars = re.findall(r'\b([A-Z][A-Z0-9_]{2,})\b', code)
+        env_vars = re.findall(r"\b([A-Z][A-Z0-9_]{2,})\b", code)
         identifiers.update(env_vars)
 
     # Return top 20 most common identifiers
-    return ' '.join(sorted(identifiers)[:20])
+    return " ".join(sorted(identifiers)[:20])
 
 
 def build_metadata(
-    heading_path: List[str],
-    section_id: str,
-    url: str,
-    content: str,
-    code_blocks: List[Dict[str, str]]
+    heading_path: list[str], section_id: str, url: str, content: str, code_blocks: list[dict[str, str]]
 ) -> ChunkMetadata:
     """Build metadata for a chunk.
 
@@ -762,7 +801,7 @@ def build_metadata(
     """
     return ChunkMetadata(
         heading_path=heading_path,
-        heading_path_joined=' > '.join(heading_path) if heading_path else '',
+        heading_path_joined=" > ".join(heading_path) if heading_path else "",
         section_id=section_id,
         url=url,
         product=extract_product(url),
@@ -770,11 +809,11 @@ def build_metadata(
         version=extract_version(heading_path, content),
         code_identifiers=extract_code_identifiers(code_blocks),
         is_parent=True,  # Will be overridden for children
-        parent_id=None
+        parent_id=None,
     )
 
 
-def extract_content_from_element(elem) -> Tuple[str, str]:
+def extract_content_from_element(elem) -> tuple[str, str]:
     """Extract content from a DOM element.
 
     Args:
@@ -783,25 +822,25 @@ def extract_content_from_element(elem) -> Tuple[str, str]:
     Returns:
         Tuple of (content_type, content_text)
     """
-    if elem.name == 'pre':
+    if elem.name == "pre":
         # Code block
-        code_elem = elem.find('code')
+        code_elem = elem.find("code")
         if code_elem:
             code_text = code_elem.get_text().strip()
             lang = extract_code_lang(code_elem)
-            return ('code', {'lang': lang, 'code': code_text})
+            return ("code", {"lang": lang, "code": code_text})
         else:
-            return ('pre', elem.get_text().strip())
+            return ("pre", elem.get_text().strip())
 
-    elif elem.name == 'table':
+    elif elem.name == "table":
         # Table
-        return ('table', elem.get_text().strip())
+        return ("table", elem.get_text().strip())
 
-    elif elem.name in ['p', 'ul', 'ol', 'dl', 'div', 'section']:
+    elif elem.name in ["p", "ul", "ol", "dl", "div", "section"]:
         # Regular content block
         text = elem.get_text().strip()
         if text and len(text) > 20:
-            return ('text', text)
+            return ("text", text)
 
     return (None, None)
 
@@ -815,8 +854,8 @@ def extract_code_lang(code_elem) -> str:
     Returns:
         Language string
     """
-    if code_elem.get('class'):
-        for cls in code_elem['class']:
-            if cls.startswith('language-'):
-                return cls.replace('language-', '')
-    return 'text'
+    if code_elem.get("class"):
+        for cls in code_elem["class"]:
+            if cls.startswith("language-"):
+                return cls.replace("language-", "")
+    return "text"

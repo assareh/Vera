@@ -3,30 +3,31 @@
 Crawls developer.hashicorp.com using the sitemap, extracts content from HTML pages,
 and builds a searchable FAISS index using LangChain.
 """
-import os
+
+import hashlib
 import json
 import logging
+import re
 import time
 import xml.etree.ElementTree as ET
-import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-from urllib.parse import urlparse, urljoin
+from typing import Any
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import hashlib
+
 import requests
-from bs4 import BeautifulSoup
 import tiktoken
+from bs4 import BeautifulSoup
+from langchain.retrievers import EnsembleRetriever
+from langchain_community.retrievers import BM25Retriever
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 
 # LangChain imports
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
 
 # Cross-encoder for re-ranking
 from sentence_transformers import CrossEncoder
@@ -42,10 +43,7 @@ logger.setLevel(logging.DEBUG)  # Enable debug logging
 if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
@@ -65,25 +63,21 @@ QUERY_EXPANSION_TERMS = {
     "requirements": ["sizing", "specifications", "recommendations", "prerequisites"],
     "needed": ["required", "recommended", "minimum", "suggested"],
     "run": ["deploy", "operate", "production", "install", "configure"],
-
     # Vault-specific
     "vault": ["vault server", "vault cluster", "vault enterprise", "vault deployment"],
     "seal": ["unseal", "auto-unseal", "seal/unseal"],
     "secret": ["secrets engine", "kv", "dynamic secrets", "credentials"],
     "auth": ["authentication", "auth method", "login", "identity"],
-
     # Consul-specific
     "consul": ["consul server", "consul agent", "consul cluster", "service mesh"],
     "service": ["service discovery", "service mesh", "service registration"],
     "dns": ["service discovery", "DNS forwarding", "DNS query"],
     "stale": ["consistency", "staleness", "eventual consistency"],
-
     # Terraform-specific
     "terraform": ["terraform cli", "terraform cloud", "terraform enterprise", "tf"],
     "state": ["state file", "remote state", "state backend", "state locking"],
     "provider": ["provider plugin", "terraform provider"],
     "module": ["terraform module", "registry module"],
-
     # General technical terms
     "default": ["default value", "default setting", "default configuration", "out of the box"],
     "configuration": ["config", "settings", "parameters", "options"],
@@ -102,7 +96,7 @@ class HashiCorpDocSearchIndex:
         update_check_interval_hours: int = 168,  # 7 days
         chunk_size: int = 800,  # Default: tokens for concept/how-to docs
         chunk_overlap: int = 120,  # Default: ~15% overlap
-        max_pages: Optional[int] = None,  # For testing, limit pages crawled
+        max_pages: int | None = None,  # For testing, limit pages crawled
         rate_limit_delay: float = 0.1,  # Delay between requests (seconds) - increased for rate limiting
         max_workers: int = 5,  # Parallel workers for fetching - reduced to avoid rate limits
         enable_reranking: bool = True,  # Enable two-stage cross-encoder re-ranking
@@ -111,7 +105,7 @@ class HashiCorpDocSearchIndex:
         rerank_top_k: int = 80,  # Candidates for final heavy reranking
         light_rerank_top_k: int = 80,  # Candidates after lightweight reranking (reduces from ~535 to 80)
         enable_query_expansion: bool = False,  # Enable query expansion with domain synonyms (disabled - too aggressive for technical queries)
-        max_expansion_terms: int = 1  # Max number of expansion terms to add per keyword
+        max_expansion_terms: int = 1,  # Max number of expansion terms to add per keyword
     ):
         """Initialize the web search index.
 
@@ -167,18 +161,18 @@ class HashiCorpDocSearchIndex:
         self.max_expansion_terms = max_expansion_terms
 
         # LangChain components
-        self.embeddings: Optional[HuggingFaceEmbeddings] = None
-        self.vectorstore: Optional[FAISS] = None
-        self.text_splitter: Optional[RecursiveCharacterTextSplitter] = None
-        self.bm25_retriever: Optional[BM25Retriever] = None
-        self.ensemble_retriever: Optional[EnsembleRetriever] = None
-        self.chunks: Optional[List[Document]] = None  # Store chunks for BM25
-        self.cross_encoder: Optional[CrossEncoder] = None  # Heavy cross-encoder (L-12) for final ranking
-        self.light_cross_encoder: Optional[CrossEncoder] = None  # Lightweight cross-encoder (L-6) for first pass
+        self.embeddings: HuggingFaceEmbeddings | None = None
+        self.vectorstore: FAISS | None = None
+        self.text_splitter: RecursiveCharacterTextSplitter | None = None
+        self.bm25_retriever: BM25Retriever | None = None
+        self.ensemble_retriever: EnsembleRetriever | None = None
+        self.chunks: list[Document] | None = None  # Store chunks for BM25
+        self.cross_encoder: CrossEncoder | None = None  # Heavy cross-encoder (L-12) for final ranking
+        self.light_cross_encoder: CrossEncoder | None = None  # Lightweight cross-encoder (L-6) for first pass
 
         # Parent-child chunking storage
-        self.parent_chunks: Dict[str, Dict[str, Any]] = {}  # chunk_id -> parent content/metadata
-        self.child_to_parent: Dict[str, str] = {}  # child_chunk_id -> parent_chunk_id
+        self.parent_chunks: dict[str, dict[str, Any]] = {}  # chunk_id -> parent content/metadata
+        self.child_to_parent: dict[str, str] = {}  # child_chunk_id -> parent_chunk_id
 
         # Robots.txt parser
         self.robot_parser = RobotFileParser()
@@ -199,7 +193,7 @@ class HashiCorpDocSearchIndex:
 
         logger.info(f"[DOC_SEARCH] Initialized with cache_dir={cache_dir}, chunk_size={chunk_size} tokens")
 
-    def _load_metadata(self) -> Dict[str, Any]:
+    def _load_metadata(self) -> dict[str, Any]:
         """Load metadata from cache."""
         if self.metadata_file.exists():
             try:
@@ -208,7 +202,7 @@ class HashiCorpDocSearchIndex:
                 logger.warning(f"[DOC_SEARCH] Failed to load metadata: {e}")
         return {}
 
-    def _save_metadata(self, metadata: Dict[str, Any]):
+    def _save_metadata(self, metadata: dict[str, Any]):
         """Save metadata to cache."""
         try:
             self.metadata_file.write_text(json.dumps(metadata, indent=2))
@@ -226,7 +220,9 @@ class HashiCorpDocSearchIndex:
         # Check version - force rebuild if chunking strategy changed
         current_version = "4.0.0-parent-child"  # Semantic parent-child chunking with token awareness
         if metadata.get("version") != current_version:
-            logger.info(f"[DOC_SEARCH] Index version changed (old: {metadata.get('version', 'unknown')}, new: {current_version}), needs rebuild")
+            logger.info(
+                f"[DOC_SEARCH] Index version changed (old: {metadata.get('version', 'unknown')}, new: {current_version}), needs rebuild"
+            )
             return True
 
         last_update = datetime.fromisoformat(metadata["last_update"])
@@ -255,7 +251,7 @@ class HashiCorpDocSearchIndex:
             logger.error(f"[DOC_SEARCH] Failed to download sitemap: {e}")
             return False
 
-    def _parse_sitemap(self) -> List[Dict[str, str]]:
+    def _parse_sitemap(self) -> list[dict[str, str]]:
         """Parse sitemap XML and extract URLs with metadata."""
         if not self.sitemap_file.exists():
             logger.error("[DOC_SEARCH] Sitemap file not found")
@@ -266,12 +262,12 @@ class HashiCorpDocSearchIndex:
             root = tree.getroot()
 
             # Handle XML namespace
-            namespace = {'ns': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+            namespace = {"ns": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
             urls = []
-            for url_elem in root.findall('ns:url', namespace):
-                loc = url_elem.find('ns:loc', namespace)
-                lastmod = url_elem.find('ns:lastmod', namespace)
+            for url_elem in root.findall("ns:url", namespace):
+                loc = url_elem.find("ns:loc", namespace)
+                lastmod = url_elem.find("ns:lastmod", namespace)
 
                 if loc is not None:
                     url = loc.text
@@ -279,25 +275,23 @@ class HashiCorpDocSearchIndex:
                     url = self._normalize_url(url)
 
                     # Skip URLs containing /partials/
-                    if '/partials/' in url:
+                    if "/partials/" in url:
                         continue
 
                     parsed = urlparse(url)
-                    path_parts = parsed.path.strip('/').split('/')
+                    path_parts = parsed.path.strip("/").split("/")
 
                     # Extract product from URL path
                     product = path_parts[0] if path_parts else "unknown"
 
-                    urls.append({
-                        "url": url,
-                        "product": product,
-                        "lastmod": lastmod.text if lastmod is not None else None
-                    })
+                    urls.append(
+                        {"url": url, "product": product, "lastmod": lastmod.text if lastmod is not None else None}
+                    )
 
             logger.info(f"[DOC_SEARCH] Parsed {len(urls)} URLs from sitemap")
 
             if self.max_pages:
-                urls = urls[:self.max_pages]
+                urls = urls[: self.max_pages]
                 logger.info(f"[DOC_SEARCH] Limited to {self.max_pages} pages for testing")
 
             return urls
@@ -306,7 +300,7 @@ class HashiCorpDocSearchIndex:
             logger.error(f"[DOC_SEARCH] Failed to parse sitemap: {e}")
             return []
 
-    def _discover_validated_designs(self) -> List[Dict[str, str]]:
+    def _discover_validated_designs(self) -> list[dict[str, str]]:
         """Discover all validated-designs pages by crawling the index and guides.
 
         Returns:
@@ -322,35 +316,35 @@ class HashiCorpDocSearchIndex:
             logger.debug(f"[DOC_SEARCH] Fetching {base_url}/validated-designs")
 
             # Fetch the index page
-            headers = {'User-Agent': USER_AGENT}
+            headers = {"User-Agent": USER_AGENT}
 
             logger.debug("[DOC_SEARCH] Requesting validated-designs index page...")
             response = requests.get(f"{base_url}/validated-designs", headers=headers, timeout=30)
             response.raise_for_status()
             logger.debug(f"[DOC_SEARCH] Got response: {response.status_code}, {len(response.text)} bytes")
 
-            soup = BeautifulSoup(response.text, 'html.parser')
+            soup = BeautifulSoup(response.text, "html.parser")
 
             # Find all links to validated-designs guides
             guide_links = set()
-            for link in soup.find_all('a', href=True):
-                href = link['href']
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
 
                 # Skip external links and non-http(s) links
-                if href.startswith('http') and not href.startswith(base_url):
+                if href.startswith("http") and not href.startswith(base_url):
                     continue
-                if href.startswith(('mailto:', 'tel:', '#')):
+                if href.startswith(("mailto:", "tel:", "#")):
                     continue
 
                 # Make absolute URL first
-                if href.startswith('/'):
+                if href.startswith("/"):
                     href = base_url + href
-                elif not href.startswith('http'):
+                elif not href.startswith("http"):
                     # Relative URL
                     href = urljoin(f"{base_url}/validated-designs", href)
 
                 # NOW check if it's a validated-designs URL
-                if '/validated-designs/' in href:
+                if "/validated-designs/" in href:
                     # Normalize URL (remove anchors)
                     href = self._normalize_url(href)
                     guide_links.add(href)
@@ -366,47 +360,45 @@ class HashiCorpDocSearchIndex:
             for idx, guide_url in enumerate(guide_links, 1):
                 try:
                     progress_pct = (idx / len(guide_links)) * 100
-                    logger.info(f"[DOC_SEARCH] [{progress_pct:5.1f}%] Crawling guide {idx}/{len(guide_links)}: {guide_url}")
+                    logger.info(
+                        f"[DOC_SEARCH] [{progress_pct:5.1f}%] Crawling guide {idx}/{len(guide_links)}: {guide_url}"
+                    )
                     time.sleep(self.rate_limit_delay)
 
                     response = requests.get(guide_url, headers=headers, timeout=30)
                     response.raise_for_status()
                     logger.debug(f"[DOC_SEARCH] Got guide page: {len(response.text)} bytes")
 
-                    soup = BeautifulSoup(response.text, 'html.parser')
+                    soup = BeautifulSoup(response.text, "html.parser")
 
                     # Find all links within this guide
                     links_found = 0
-                    for link in soup.find_all('a', href=True):
-                        href = link['href']
+                    for link in soup.find_all("a", href=True):
+                        href = link["href"]
 
                         # Skip external links and non-http(s) links
-                        if href.startswith('http') and not href.startswith(base_url):
+                        if href.startswith("http") and not href.startswith(base_url):
                             continue
-                        if href.startswith(('mailto:', 'tel:', '#')):
+                        if href.startswith(("mailto:", "tel:", "#")):
                             continue
 
                         # Make absolute URL first
-                        if href.startswith('/'):
+                        if href.startswith("/"):
                             href = base_url + href
-                        elif not href.startswith('http'):
+                        elif not href.startswith("http"):
                             # Relative URL - resolve relative to guide_url
                             href = urljoin(guide_url, href)
 
                         # NOW check if it's a validated-designs URL
-                        if '/validated-designs/' in href:
+                        if "/validated-designs/" in href:
                             # Normalize URL (remove anchors)
                             href = self._normalize_url(href)
 
                             # Extract product from URL
-                            path_parts = href.replace(base_url, '').strip('/').split('/')
-                            product = path_parts[1].split('-')[0] if len(path_parts) > 1 else "unknown"
+                            path_parts = href.replace(base_url, "").strip("/").split("/")
+                            product = path_parts[1].split("-")[0] if len(path_parts) > 1 else "unknown"
 
-                            discovered_urls.append({
-                                "url": href,
-                                "product": product,
-                                "lastmod": None
-                            })
+                            discovered_urls.append({"url": href, "product": product, "lastmod": None})
                             links_found += 1
 
                     logger.debug(f"[DOC_SEARCH] Found {links_found} links in guide {idx}/{len(guide_links)}")
@@ -426,10 +418,11 @@ class HashiCorpDocSearchIndex:
         except Exception as e:
             logger.error(f"[DOC_SEARCH] Failed to discover validated-designs: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return []
 
-    def _discover_release_notes(self) -> List[Dict[str, str]]:
+    def _discover_release_notes(self) -> list[dict[str, str]]:
         """Discover version-specific release notes pages for all products.
 
         Release notes aren't in the sitemap, so we generate URLs based on known patterns:
@@ -443,18 +436,18 @@ class HashiCorpDocSearchIndex:
         """
         discovered_urls = []
         base_url = "https://developer.hashicorp.com"
-        headers = {'User-Agent': USER_AGENT}
+        headers = {"User-Agent": USER_AGENT}
 
         # Product configurations: (product_name, url_pattern, versions_to_try)
         # versions_to_try: range of minor versions to check (e.g., range(15, 22) for 1.15-1.21)
         products = [
-            ('vault', '/vault/docs/v1.{minor}.x/updates/release-notes', range(15, 22)),
-            ('consul', '/consul/docs/v1.{minor}.x/release-notes', range(15, 22)),
-            ('terraform', '/terraform/docs/v1.{minor}.x/language/upgrade-guides', range(5, 11)),
-            ('nomad', '/nomad/docs/release-notes/nomad/v1_{minor}_x', range(5, 11)),
-            ('boundary', '/boundary/docs/v0.{minor}.x/release-notes', range(10, 18)),
-            ('waypoint', '/waypoint/docs/v0.{minor}.x/release-notes', range(8, 12)),
-            ('packer', '/packer/docs/v1.{minor}.x/whats-new', range(8, 12)),
+            ("vault", "/vault/docs/v1.{minor}.x/updates/release-notes", range(15, 22)),
+            ("consul", "/consul/docs/v1.{minor}.x/release-notes", range(15, 22)),
+            ("terraform", "/terraform/docs/v1.{minor}.x/language/upgrade-guides", range(5, 11)),
+            ("nomad", "/nomad/docs/release-notes/nomad/v1_{minor}_x", range(5, 11)),
+            ("boundary", "/boundary/docs/v0.{minor}.x/release-notes", range(10, 18)),
+            ("waypoint", "/waypoint/docs/v0.{minor}.x/release-notes", range(8, 12)),
+            ("packer", "/packer/docs/v1.{minor}.x/whats-new", range(8, 12)),
         ]
 
         logger.info("[DOC_SEARCH] " + "=" * 70)
@@ -477,17 +470,13 @@ class HashiCorpDocSearchIndex:
                     response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
 
                     if response.status_code == 200:
-                        discovered_urls.append({
-                            "url": url,
-                            "product": product,
-                            "lastmod": None
-                        })
+                        discovered_urls.append({"url": url, "product": product, "lastmod": None})
                         product_found += 1
                         logger.debug(f"[DOC_SEARCH]   ✓ Found: {url}")
 
                     time.sleep(self.rate_limit_delay)
 
-                except Exception as e:
+                except Exception:
                     logger.debug(f"[DOC_SEARCH]   ✗ Not found: {url}")
                     continue
 
@@ -534,7 +523,7 @@ class HashiCorpDocSearchIndex:
             logger.warning(f"[DOC_SEARCH] Token counting failed: {e}, using estimate")
             return len(text) // 4
 
-    def _get_chunk_config(self, url: str) -> Dict[str, int]:
+    def _get_chunk_config(self, url: str) -> dict[str, int]:
         """Get adaptive chunk configuration based on document type.
 
         Args:
@@ -544,24 +533,24 @@ class HashiCorpDocSearchIndex:
             Dictionary with 'size' (tokens) and 'overlap' (tokens)
         """
         # API reference and CLI command pages - smaller chunks
-        if '/api/' in url or '/api-docs/' in url or '/commands/' in url:
-            return {'size': 500, 'overlap': 75}  # ~15% overlap
+        if "/api/" in url or "/api-docs/" in url or "/commands/" in url:
+            return {"size": 500, "overlap": 75}  # ~15% overlap
 
         # Configuration-heavy pages - medium chunks with more overlap
-        elif '/configuration/' in url or re.search(r'/docs/.*config', url):
-            return {'size': 400, 'overlap': 80}  # ~20% overlap
+        elif "/configuration/" in url or re.search(r"/docs/.*config", url):
+            return {"size": 400, "overlap": 80}  # ~20% overlap
 
         # Release notes and changelogs - medium chunks
-        elif '/release-notes' in url or '/changelog' in url or '/releases/' in url:
-            return {'size': 600, 'overlap': 60}  # ~10% overlap
+        elif "/release-notes" in url or "/changelog" in url or "/releases/" in url:
+            return {"size": 600, "overlap": 60}  # ~10% overlap
 
         # Tutorials and guides - larger chunks
-        elif '/tutorials/' in url or '/guides/' in url:
-            return {'size': 900, 'overlap': 135}  # ~15% overlap
+        elif "/tutorials/" in url or "/guides/" in url:
+            return {"size": 900, "overlap": 135}  # ~15% overlap
 
         # Concept/how-to documentation (default) - standard chunks
         else:
-            return {'size': 800, 'overlap': 120}  # ~15% overlap
+            return {"size": 800, "overlap": 120}  # ~15% overlap
 
     def _can_fetch(self, url: str) -> bool:
         """Check if URL can be fetched according to robots.txt.
@@ -575,7 +564,7 @@ class HashiCorpDocSearchIndex:
             True if allowed, False otherwise
         """
         # Always allow validated-designs pages regardless of robots.txt
-        if '/validated-designs' in url or '/validated-patterns' in url:
+        if "/validated-designs" in url or "/validated-patterns" in url:
             return True
 
         try:
@@ -584,7 +573,7 @@ class HashiCorpDocSearchIndex:
             # If robots.txt parsing fails, be conservative and allow
             return True
 
-    def _extract_table_as_markdown(self, table_element) -> Optional[str]:
+    def _extract_table_as_markdown(self, table_element) -> str | None:
         """Convert HTML table to markdown format.
 
         Args:
@@ -598,35 +587,35 @@ class HashiCorpDocSearchIndex:
 
             # Extract headers from thead or first row
             headers = []
-            thead = table_element.find('thead')
+            thead = table_element.find("thead")
             if thead:
-                header_row = thead.find('tr')
+                header_row = thead.find("tr")
                 if header_row:
-                    headers = [th.get_text(strip=True) for th in header_row.find_all(['th', 'td'])]
+                    headers = [th.get_text(strip=True) for th in header_row.find_all(["th", "td"])]
 
             # If no thead, check if first row in tbody has th elements
             if not headers:
-                tbody = table_element.find('tbody') or table_element
-                first_row = tbody.find('tr')
+                tbody = table_element.find("tbody") or table_element
+                first_row = tbody.find("tr")
                 if first_row:
-                    ths = first_row.find_all('th')
+                    ths = first_row.find_all("th")
                     if ths:
                         headers = [th.get_text(strip=True) for th in ths]
                     else:
                         # First row might be headers even if using td
-                        headers = [td.get_text(strip=True) for td in first_row.find_all('td')]
+                        headers = [td.get_text(strip=True) for td in first_row.find_all("td")]
 
             if not headers:
                 return None
 
             # Build markdown header
             markdown_parts = []
-            markdown_parts.append('| ' + ' | '.join(headers) + ' |')
-            markdown_parts.append('| ' + ' | '.join(['---'] * len(headers)) + ' |')
+            markdown_parts.append("| " + " | ".join(headers) + " |")
+            markdown_parts.append("| " + " | ".join(["---"] * len(headers)) + " |")
 
             # Extract data rows from tbody
-            tbody = table_element.find('tbody') or table_element
-            data_rows = tbody.find_all('tr')
+            tbody = table_element.find("tbody") or table_element
+            data_rows = tbody.find_all("tr")
 
             # Skip first row if it was used for headers
             start_idx = 1 if not thead and data_rows else 0
@@ -634,17 +623,17 @@ class HashiCorpDocSearchIndex:
                 start_idx = 0
 
             for row in data_rows[start_idx:]:
-                cells = row.find_all(['td', 'th'])
+                cells = row.find_all(["td", "th"])
                 if cells:
-                    cell_texts = [cell.get_text(strip=True).replace('|', '\\|') for cell in cells]
+                    cell_texts = [cell.get_text(strip=True).replace("|", "\\|") for cell in cells]
                     # Pad with empty cells if needed
                     while len(cell_texts) < len(headers):
-                        cell_texts.append('')
-                    markdown_parts.append('| ' + ' | '.join(cell_texts[:len(headers)]) + ' |')
+                        cell_texts.append("")
+                    markdown_parts.append("| " + " | ".join(cell_texts[: len(headers)]) + " |")
 
             # Only return if we have at least one data row
             if len(markdown_parts) > 2:
-                return '\n'.join(markdown_parts)
+                return "\n".join(markdown_parts)
 
             return None
 
@@ -652,7 +641,7 @@ class HashiCorpDocSearchIndex:
             logger.warning(f"[DOC_SEARCH] Failed to extract table: {e}")
             return None
 
-    def _extract_main_content(self, html: str, url: str) -> Optional[Dict[str, Any]]:
+    def _extract_main_content(self, html: str, url: str) -> dict[str, Any] | None:
         """Extract main documentation content from HTML page with section anchors.
 
         Preserves structure including headings, anchors, code blocks, and tables for better context.
@@ -665,20 +654,20 @@ class HashiCorpDocSearchIndex:
             Dictionary with 'content' (text) and 'sections' (list of section info) or None
         """
         try:
-            soup = BeautifulSoup(html, 'html.parser')
+            soup = BeautifulSoup(html, "html.parser")
 
             # Remove unwanted elements
-            for element in soup.find_all(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+            for element in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
                 element.decompose()
 
             # Try to find main content area
             # HashiCorp docs typically use main, article, or specific content divs
             main_content = (
-                soup.find('main') or
-                soup.find('article') or
-                soup.find('div', {'id': 'content'}) or
-                soup.find('div', {'class': 'content'}) or
-                soup.body
+                soup.find("main")
+                or soup.find("article")
+                or soup.find("div", {"id": "content"})
+                or soup.find("div", {"class": "content"})
+                or soup.body
             )
 
             if main_content:
@@ -696,70 +685,74 @@ class HashiCorpDocSearchIndex:
                     if id(element) in processed_elements:
                         continue
 
-                    if element.name == 'h1':
+                    if element.name == "h1":
                         heading_text = element.get_text(strip=True)
-                        anchor_id = element.get('id', '')
+                        anchor_id = element.get("id", "")
                         text_parts.append(f"\n# {heading_text}\n")
                         if anchor_id:
-                            sections.append({
-                                'level': 1,
-                                'text': heading_text,
-                                'anchor': anchor_id,
-                                'position': len(''.join(text_parts))
-                            })
+                            sections.append(
+                                {
+                                    "level": 1,
+                                    "text": heading_text,
+                                    "anchor": anchor_id,
+                                    "position": len("".join(text_parts)),
+                                }
+                            )
                         processed_elements.add(id(element))
 
-                    elif element.name == 'h2':
+                    elif element.name == "h2":
                         heading_text = element.get_text(strip=True)
-                        anchor_id = element.get('id', '')
+                        anchor_id = element.get("id", "")
                         text_parts.append(f"\n## {heading_text}\n")
                         current_h2_anchor = anchor_id  # Track for H3s
                         if anchor_id:
                             current_section = {
-                                'level': 2,
-                                'text': heading_text,
-                                'anchor': anchor_id,
-                                'position': len(''.join(text_parts))
+                                "level": 2,
+                                "text": heading_text,
+                                "anchor": anchor_id,
+                                "position": len("".join(text_parts)),
                             }
                             sections.append(current_section)
                         processed_elements.add(id(element))
 
-                    elif element.name == 'h3':
+                    elif element.name == "h3":
                         heading_text = element.get_text(strip=True)
-                        anchor_id = element.get('id', '')
+                        anchor_id = element.get("id", "")
                         text_parts.append(f"\n### {heading_text}\n")
                         # Use H3 anchor if available, otherwise fall back to parent H2
                         section_anchor = anchor_id if anchor_id else current_h2_anchor
                         if section_anchor:
-                            sections.append({
-                                'level': 3,
-                                'text': heading_text,
-                                'anchor': section_anchor,
-                                'position': len(''.join(text_parts)),
-                                'parent_anchor': current_h2_anchor if anchor_id else None
-                            })
+                            sections.append(
+                                {
+                                    "level": 3,
+                                    "text": heading_text,
+                                    "anchor": section_anchor,
+                                    "position": len("".join(text_parts)),
+                                    "parent_anchor": current_h2_anchor if anchor_id else None,
+                                }
+                            )
                         processed_elements.add(id(element))
 
-                    elif element.name in ['pre', 'code'] and element.parent.name != 'pre':
+                    elif element.name in ["pre", "code"] and element.parent.name != "pre":
                         # Preserve code blocks (avoid duplicating code inside pre)
                         code_text = element.get_text(strip=False)
                         if code_text.strip():
                             text_parts.append(f"\n```\n{code_text}\n```\n")
                         processed_elements.add(id(element))
 
-                    elif element.name == 'p' and not any(p.name in ['pre', 'code'] for p in element.parents):
+                    elif element.name == "p" and not any(p.name in ["pre", "code"] for p in element.parents):
                         para_text = element.get_text(strip=True)
                         if para_text:
                             text_parts.append(f"{para_text}\n")
                         processed_elements.add(id(element))
 
-                    elif element.name == 'li' and element.parent.name in ['ul', 'ol']:
+                    elif element.name == "li" and element.parent.name in ["ul", "ol"]:
                         li_text = element.get_text(strip=True)
                         if li_text:
                             text_parts.append(f"- {li_text}\n")
                         processed_elements.add(id(element))
 
-                    elif element.name == 'table':
+                    elif element.name == "table":
                         # Extract table and convert to markdown format
                         table_markdown = self._extract_table_as_markdown(element)
                         if table_markdown:
@@ -770,15 +763,13 @@ class HashiCorpDocSearchIndex:
                         processed_elements.add(id(element))
 
                 # Join and clean up excessive whitespace
-                text = ''.join(text_parts)
+                text = "".join(text_parts)
                 # Collapse multiple newlines into max 2
                 import re
-                text = re.sub(r'\n{3,}', '\n\n', text)
 
-                return {
-                    'content': text.strip(),
-                    'sections': sections
-                }
+                text = re.sub(r"\n{3,}", "\n\n", text)
+
+                return {"content": text.strip(), "sections": sections}
 
             return None
 
@@ -786,7 +777,7 @@ class HashiCorpDocSearchIndex:
             logger.warning(f"[DOC_SEARCH] Failed to extract content from {url}: {e}")
             return None
 
-    def _fetch_page_content(self, url_info: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    def _fetch_page_content(self, url_info: dict[str, str]) -> dict[str, Any] | None:
         """Fetch and extract content from a single page.
 
         Args:
@@ -804,7 +795,7 @@ class HashiCorpDocSearchIndex:
 
         try:
             # Fetch the page with proper User-Agent
-            headers = {'User-Agent': USER_AGENT}
+            headers = {"User-Agent": USER_AGENT}
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
 
@@ -822,7 +813,7 @@ class HashiCorpDocSearchIndex:
                 "content": extracted["content"],
                 "sections": extracted["sections"],
                 "length": len(extracted["content"]),
-                "html": response.text  # Store raw HTML for parent-child chunking
+                "html": response.text,  # Store raw HTML for parent-child chunking
             }
 
         except Exception as e:
@@ -834,7 +825,7 @@ class HashiCorpDocSearchIndex:
         url_hash = hashlib.md5(url.encode()).hexdigest()
         return self.content_dir / f"{url_hash}.json"
 
-    def _load_cached_page(self, url: str, lastmod: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _load_cached_page(self, url: str, lastmod: str | None) -> dict[str, Any] | None:
         """Load cached page content if still valid.
 
         Args:
@@ -857,7 +848,7 @@ class HashiCorpDocSearchIndex:
         except:
             return None
 
-    def _save_cached_page(self, page_data: Dict[str, Any]):
+    def _save_cached_page(self, page_data: dict[str, Any]):
         """Save page content to cache."""
         try:
             cache_path = self._get_page_cache_path(page_data["url"])
@@ -865,7 +856,7 @@ class HashiCorpDocSearchIndex:
         except Exception as e:
             logger.warning(f"[DOC_SEARCH] Failed to cache page: {e}")
 
-    def _save_url_list(self, url_list: List[Dict[str, str]]):
+    def _save_url_list(self, url_list: list[dict[str, str]]):
         """Save URL list to disk for resume capability."""
         try:
             self.url_list_file.write_text(json.dumps(url_list, indent=2))
@@ -873,7 +864,7 @@ class HashiCorpDocSearchIndex:
         except Exception as e:
             logger.warning(f"[DOC_SEARCH] Failed to save URL list: {e}")
 
-    def _load_url_list(self) -> Optional[List[Dict[str, str]]]:
+    def _load_url_list(self) -> list[dict[str, str]] | None:
         """Load URL list from disk."""
         if not self.url_list_file.exists():
             return None
@@ -885,33 +876,24 @@ class HashiCorpDocSearchIndex:
             logger.warning(f"[DOC_SEARCH] Failed to load URL list: {e}")
             return None
 
-    def _save_chunks(self, chunks: List[Document]):
+    def _save_chunks(self, chunks: list[Document]):
         """Save chunks to disk for resume capability."""
         try:
             # Convert Document objects to serializable dicts
-            chunk_dicts = [
-                {
-                    "page_content": chunk.page_content,
-                    "metadata": chunk.metadata
-                }
-                for chunk in chunks
-            ]
+            chunk_dicts = [{"page_content": chunk.page_content, "metadata": chunk.metadata} for chunk in chunks]
             self.chunks_file.write_text(json.dumps(chunk_dicts))
             logger.info(f"[DOC_SEARCH] Saved {len(chunks)} chunks to {self.chunks_file}")
         except Exception as e:
             logger.warning(f"[DOC_SEARCH] Failed to save chunks: {e}")
 
-    def _load_chunks(self) -> Optional[List[Document]]:
+    def _load_chunks(self) -> list[Document] | None:
         """Load chunks from disk."""
         if not self.chunks_file.exists():
             return None
         try:
             chunk_dicts = json.loads(self.chunks_file.read_text())
             chunks = [
-                Document(
-                    page_content=chunk_dict["page_content"],
-                    metadata=chunk_dict["metadata"]
-                )
+                Document(page_content=chunk_dict["page_content"], metadata=chunk_dict["metadata"])
                 for chunk_dict in chunk_dicts
             ]
             logger.info(f"[DOC_SEARCH] Loaded {len(chunks)} chunks from cache")
@@ -923,16 +905,12 @@ class HashiCorpDocSearchIndex:
     def _save_embedding_progress(self, completed_count: int, total_count: int):
         """Save embedding progress."""
         try:
-            progress = {
-                "completed": completed_count,
-                "total": total_count,
-                "timestamp": datetime.now().isoformat()
-            }
+            progress = {"completed": completed_count, "total": total_count, "timestamp": datetime.now().isoformat()}
             self.embedding_progress_file.write_text(json.dumps(progress))
         except Exception as e:
             logger.warning(f"[DOC_SEARCH] Failed to save embedding progress: {e}")
 
-    def _load_embedding_progress(self) -> Optional[Dict[str, Any]]:
+    def _load_embedding_progress(self) -> dict[str, Any] | None:
         """Load embedding progress."""
         if not self.embedding_progress_file.exists():
             return None
@@ -942,7 +920,7 @@ class HashiCorpDocSearchIndex:
             logger.warning(f"[DOC_SEARCH] Failed to load embedding progress: {e}")
             return None
 
-    def _fetch_with_cache(self, url_info: Dict[str, str]) -> Optional[Dict[str, Any]]:
+    def _fetch_with_cache(self, url_info: dict[str, str]) -> dict[str, Any] | None:
         """Fetch page with caching support."""
         # Try cache first
         cached = self._load_cached_page(url_info["url"], url_info.get("lastmod"))
@@ -956,7 +934,7 @@ class HashiCorpDocSearchIndex:
 
         return page_data
 
-    def _split_into_sections(self, page_data: Dict[str, Any]) -> List[Document]:
+    def _split_into_sections(self, page_data: dict[str, Any]) -> list[Document]:
         """Split page content into parent-child semantic chunks.
 
         Uses semantic_chunk_html for token-aware hierarchical chunking.
@@ -981,21 +959,19 @@ class HashiCorpDocSearchIndex:
                 self._initialize_components()
 
             split_docs = self.text_splitter.split_text(content)
-            return [Document(
-                page_content=chunk,
-                metadata={
-                    "url": url,
-                    "product": product,
-                    "source": "web",
-                    "lastmod": page_data.get("lastmod")
-                }
-            ) for chunk in split_docs]
+            return [
+                Document(
+                    page_content=chunk,
+                    metadata={"url": url, "product": product, "source": "web", "lastmod": page_data.get("lastmod")},
+                )
+                for chunk in split_docs
+            ]
 
         try:
             # Use semantic chunking to create parent-child hierarchy
             result = semantic_chunk_html(html, url)
-            parents = result.get('parents', [])
-            children = result.get('children', [])
+            parents = result.get("parents", [])
+            children = result.get("children", [])
 
             if not children:
                 logger.warning(f"[DOC_SEARCH] No children chunks created for {url}")
@@ -1004,39 +980,37 @@ class HashiCorpDocSearchIndex:
                 if self.text_splitter is None:
                     self._initialize_components()
                 split_docs = self.text_splitter.split_text(content)
-                return [Document(
-                    page_content=chunk,
-                    metadata={
-                        "url": url,
-                        "product": product,
-                        "source": "web",
-                        "lastmod": page_data.get("lastmod")
-                    }
-                ) for chunk in split_docs]
+                return [
+                    Document(
+                        page_content=chunk,
+                        metadata={"url": url, "product": product, "source": "web", "lastmod": page_data.get("lastmod")},
+                    )
+                    for chunk in split_docs
+                ]
 
             # Store parent chunks in the parent_chunks dict
             for parent in parents:
-                chunk_id = parent['chunk_id']
+                chunk_id = parent["chunk_id"]
                 self.parent_chunks[chunk_id] = {
-                    'content': parent['content'],
-                    'metadata': parent['metadata'],
-                    'url': url,
-                    'product': product,
-                    'lastmod': page_data.get("lastmod")
+                    "content": parent["content"],
+                    "metadata": parent["metadata"],
+                    "url": url,
+                    "product": product,
+                    "lastmod": page_data.get("lastmod"),
                 }
 
             # Create LangChain Documents from child chunks
             child_docs = []
             for child in children:
-                chunk_id = child['chunk_id']
-                parent_id = child['metadata'].parent_id
+                chunk_id = child["chunk_id"]
+                parent_id = child["metadata"].parent_id
 
                 # Store child-to-parent mapping
                 self.child_to_parent[chunk_id] = parent_id
 
                 # Create Document with enriched metadata
                 doc = Document(
-                    page_content=child['content'],
+                    page_content=child["content"],
                     metadata={
                         "url": url,
                         "product": product,
@@ -1044,10 +1018,10 @@ class HashiCorpDocSearchIndex:
                         "lastmod": page_data.get("lastmod"),
                         "chunk_id": chunk_id,
                         "parent_id": parent_id,
-                        "heading": child['metadata'].heading_path_joined,
-                        "doc_type": child['metadata'].doc_type,
-                        "version": child['metadata'].version
-                    }
+                        "heading": child["metadata"].heading_path_joined,
+                        "doc_type": child["metadata"].doc_type,
+                        "version": child["metadata"].version,
+                    },
                 )
                 child_docs.append(doc)
 
@@ -1061,24 +1035,17 @@ class HashiCorpDocSearchIndex:
             if self.text_splitter is None:
                 self._initialize_components()
             split_docs = self.text_splitter.split_text(content)
-            return [Document(
-                page_content=chunk,
-                metadata={
-                    "url": url,
-                    "product": product,
-                    "source": "web",
-                    "lastmod": page_data.get("lastmod")
-                }
-            ) for chunk in split_docs]
+            return [
+                Document(
+                    page_content=chunk,
+                    metadata={"url": url, "product": product, "source": "web", "lastmod": page_data.get("lastmod")},
+                )
+                for chunk in split_docs
+            ]
 
     def _split_large_section(
-        self,
-        content: str,
-        heading: str,
-        anchor: str,
-        chunk_size_tokens: int,
-        overlap_tokens: int
-    ) -> List[str]:
+        self, content: str, heading: str, anchor: str, chunk_size_tokens: int, overlap_tokens: int
+    ) -> list[str]:
         """Split a large section into smaller token-based chunks with overlap.
 
         Args:
@@ -1095,10 +1062,8 @@ class HashiCorpDocSearchIndex:
 
         # Use TokenTextSplitter for token-based splitting
         from langchain_text_splitters import TokenTextSplitter
-        token_splitter = TokenTextSplitter(
-            chunk_size=chunk_size_tokens,
-            chunk_overlap=overlap_tokens
-        )
+
+        token_splitter = TokenTextSplitter(chunk_size=chunk_size_tokens, chunk_overlap=overlap_tokens)
 
         # Split the content
         split_docs = token_splitter.split_text(content)
@@ -1114,7 +1079,7 @@ class HashiCorpDocSearchIndex:
 
         return chunks
 
-    def _fetch_pages(self, url_list: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    def _fetch_pages(self, url_list: list[dict[str, str]]) -> list[dict[str, Any]]:
         """Fetch page content from URLs using parallel fetching.
 
         Args:
@@ -1135,10 +1100,7 @@ class HashiCorpDocSearchIndex:
         # Use ThreadPoolExecutor for parallel fetching
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all fetch tasks
-            future_to_url = {
-                executor.submit(self._fetch_with_cache, url_info): url_info
-                for url_info in url_list
-            }
+            future_to_url = {executor.submit(self._fetch_with_cache, url_info): url_info for url_info in url_list}
 
             # Process completed tasks
             completed = 0
@@ -1180,7 +1142,7 @@ class HashiCorpDocSearchIndex:
         logger.info("[DOC_SEARCH] " + "=" * 70)
         return pages
 
-    def _create_chunks(self, pages: List[Dict[str, Any]]) -> List[Document]:
+    def _create_chunks(self, pages: list[dict[str, Any]]) -> list[Document]:
         """Create section-aware chunks from fetched pages.
 
         Args:
@@ -1224,7 +1186,9 @@ class HashiCorpDocSearchIndex:
         elapsed = time.time() - start_time
         avg_chunks_per_page = len(all_chunks) / total if total > 0 else 0
         logger.info("[DOC_SEARCH] " + "-" * 70)
-        logger.info(f"[DOC_SEARCH] ✓ Created {len(all_chunks)} section-aware chunks from {total} pages in {elapsed:.1f}s")
+        logger.info(
+            f"[DOC_SEARCH] ✓ Created {len(all_chunks)} section-aware chunks from {total} pages in {elapsed:.1f}s"
+        )
         logger.info(f"[DOC_SEARCH] Average: {avg_chunks_per_page:.1f} chunks per page")
         logger.info("[DOC_SEARCH] " + "=" * 70)
         return all_chunks
@@ -1255,13 +1219,13 @@ class HashiCorpDocSearchIndex:
 
             if word in QUERY_EXPANSION_TERMS:
                 # Add up to max_expansion_terms synonyms for this word
-                synonyms = QUERY_EXPANSION_TERMS[word][:self.max_expansion_terms]
+                synonyms = QUERY_EXPANSION_TERMS[word][: self.max_expansion_terms]
                 for syn in synonyms:
                     if len(expansion_terms) < max_total_expansions:
                         expansion_terms.append(syn)
 
         if not expansion_terms:
-            logger.debug(f"[DOC_SEARCH] No query expansion applied")
+            logger.debug("[DOC_SEARCH] No query expansion applied")
             return query
 
         # Append expansion terms to original query
@@ -1271,7 +1235,7 @@ class HashiCorpDocSearchIndex:
 
         return expanded
 
-    def _rerank_results(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _rerank_results(self, query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Re-rank search results using cross-encoder.
 
         Args:
@@ -1287,29 +1251,31 @@ class HashiCorpDocSearchIndex:
         logger.debug(f"[DOC_SEARCH] Re-ranking {len(results)} results with cross-encoder...")
 
         # Prepare query-document pairs for scoring
-        pairs = [[query, result['text']] for result in results]
+        pairs = [[query, result["text"]] for result in results]
 
         # Score all pairs
         scores = self.cross_encoder.predict(pairs)
 
         # Update results with new scores, preserving URL boost
         for result, score in zip(results, scores):
-            result['rerank_score'] = float(score)
-            result['original_score'] = result['score']
+            result["rerank_score"] = float(score)
+            result["original_score"] = result["score"]
 
             # Apply URL boost to cross-encoder score (for release notes)
-            base_url = result.get('url', '')
+            base_url = result.get("url", "")
             boosted_score = float(score)
 
             # Check if this is a release notes URL
-            is_release_notes = "/release-notes/" in base_url or "/releases/" in base_url or "/updates/release-notes" in base_url
+            is_release_notes = (
+                "/release-notes/" in base_url or "/releases/" in base_url or "/updates/release-notes" in base_url
+            )
 
             if is_release_notes:
                 # Check if we have version info and this URL matches the exact version
-                version_info = getattr(self, '_current_version_info', None)
-                if version_info and version_info.get('is_version_query'):
-                    version = version_info.get('version_major_minor') or version_info.get('version')
-                    product = version_info.get('product')
+                version_info = getattr(self, "_current_version_info", None)
+                if version_info and version_info.get("is_version_query"):
+                    version = version_info.get("version_major_minor") or version_info.get("version")
+                    product = version_info.get("product")
 
                     # Check if URL contains the exact version (e.g., "v1_9_x" or "v1.9")
                     # Handle both underscore (v1_9_x) and dot (v1.9.x) formats
@@ -1327,24 +1293,32 @@ class HashiCorpDocSearchIndex:
                     if product_match and version_match:
                         # VERY STRONG boost for exact version match (4.0x = 300% boost)
                         boosted_score = boosted_score * 4.0
-                        logger.debug(f"[DOC_SEARCH]   🎯 Exact version match boost: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}")
+                        logger.debug(
+                            f"[DOC_SEARCH]   🎯 Exact version match boost: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}"
+                        )
                     else:
                         # Regular boost for release notes (2.0x = 100% boost)
                         boosted_score = boosted_score * 2.0
-                        logger.debug(f"[DOC_SEARCH]   URL boost applied: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}")
+                        logger.debug(
+                            f"[DOC_SEARCH]   URL boost applied: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}"
+                        )
                 else:
                     # Regular boost for release notes when not a version query (2.0x = 100% boost)
                     boosted_score = boosted_score * 2.0
-                    logger.debug(f"[DOC_SEARCH]   URL boost applied: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}")
+                    logger.debug(
+                        f"[DOC_SEARCH]   URL boost applied: {score:.3f} -> {boosted_score:.3f} | {base_url[:80]}"
+                    )
 
-            result['score'] = boosted_score
+            result["score"] = boosted_score
 
         # Sort by new scores (descending)
-        reranked = sorted(results, key=lambda x: x['score'], reverse=True)
+        reranked = sorted(results, key=lambda x: x["score"], reverse=True)
 
-        logger.debug(f"[DOC_SEARCH] Re-ranking complete. Score changes:")
+        logger.debug("[DOC_SEARCH] Re-ranking complete. Score changes:")
         for i, (orig, new) in enumerate(zip(results[:5], reranked[:5]), 1):
-            logger.debug(f"[DOC_SEARCH]   Position {i}: score {orig['original_score']:.3f} -> {new['score']:.3f} | {new['url'][:60]}")
+            logger.debug(
+                f"[DOC_SEARCH]   Position {i}: score {orig['original_score']:.3f} -> {new['score']:.3f} | {new['url'][:60]}"
+            )
 
         return reranked
 
@@ -1353,9 +1327,7 @@ class HashiCorpDocSearchIndex:
         if self.embeddings is None:
             logger.info(f"[DOC_SEARCH] Loading embeddings model: {self.model_name}")
             self.embeddings = HuggingFaceEmbeddings(
-                model_name=self.model_name,
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
+                model_name=self.model_name, model_kwargs={"device": "cpu"}, encode_kwargs={"normalize_embeddings": True}
             )
 
         if self.text_splitter is None:
@@ -1364,20 +1336,24 @@ class HashiCorpDocSearchIndex:
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
                 length_function=len,
-                separators=["\n\n", "\n", ". ", " ", ""]
+                separators=["\n\n", "\n", ". ", " ", ""],
             )
 
         if self.enable_reranking and self.cross_encoder is None:
             logger.info(f"[DOC_SEARCH] Loading heavy cross-encoder for final ranking: {self.rerank_model}")
             self.cross_encoder = CrossEncoder(self.rerank_model)
-            logger.info(f"[DOC_SEARCH] Heavy cross-encoder (L-12) loaded")
+            logger.info("[DOC_SEARCH] Heavy cross-encoder (L-12) loaded")
 
         if self.enable_reranking and self.light_cross_encoder is None:
-            logger.info(f"[DOC_SEARCH] Loading lightweight cross-encoder for first-pass ranking: {self.light_rerank_model}")
+            logger.info(
+                f"[DOC_SEARCH] Loading lightweight cross-encoder for first-pass ranking: {self.light_rerank_model}"
+            )
             self.light_cross_encoder = CrossEncoder(self.light_rerank_model)
-            logger.info(f"[DOC_SEARCH] Lightweight cross-encoder (L-6) loaded (will reduce candidates to {self.light_rerank_top_k})")
+            logger.info(
+                f"[DOC_SEARCH] Lightweight cross-encoder (L-6) loaded (will reduce candidates to {self.light_rerank_top_k})"
+            )
 
-    def _build_index(self, url_list: List[Dict[str, str]]):
+    def _build_index(self, url_list: list[dict[str, str]]):
         """Build FAISS index using LangChain with resume capability.
 
         Args:
@@ -1460,7 +1436,9 @@ class HashiCorpDocSearchIndex:
 
         embedding_elapsed = time.time() - embedding_start_time
         logger.info("[DOC_SEARCH] " + "-" * 70)
-        logger.info(f"[DOC_SEARCH] ✓ All embeddings generated in {embedding_elapsed:.1f}s ({embedding_elapsed/60:.1f} min)")
+        logger.info(
+            f"[DOC_SEARCH] ✓ All embeddings generated in {embedding_elapsed:.1f}s ({embedding_elapsed/60:.1f} min)"
+        )
         logger.info(f"[DOC_SEARCH] ✓ {len(chunks):,} chunks indexed successfully")
         logger.info("[DOC_SEARCH] " + "=" * 70)
 
@@ -1478,9 +1456,7 @@ class HashiCorpDocSearchIndex:
             # Load FAISS index
             logger.info("[DOC_SEARCH] Loading FAISS index from disk...")
             self.vectorstore = FAISS.load_local(
-                str(self.index_dir),
-                self.embeddings,
-                allow_dangerous_deserialization=True
+                str(self.index_dir), self.embeddings, allow_dangerous_deserialization=True
             )
             logger.info("[DOC_SEARCH] Index loaded successfully")
 
@@ -1503,7 +1479,7 @@ class HashiCorpDocSearchIndex:
             logger.info("[DOC_SEARCH] Creating hybrid retriever (50% BM25, 50% semantic)...")
             self.ensemble_retriever = EnsembleRetriever(
                 retrievers=[self.bm25_retriever, faiss_retriever],
-                weights=[0.5, 0.5]  # 50% keyword, 50% semantic (balanced for technical queries)
+                weights=[0.5, 0.5],  # 50% keyword, 50% semantic (balanced for technical queries)
             )
 
             logger.info("[DOC_SEARCH] Hybrid search enabled!")
@@ -1604,7 +1580,9 @@ class HashiCorpDocSearchIndex:
         # Check embedding progress
         progress = self._load_embedding_progress()
         if progress:
-            logger.info(f"[DOC_SEARCH] ✓ Previous embedding progress: {progress['completed']:,}/{progress['total']:,} chunks")
+            logger.info(
+                f"[DOC_SEARCH] ✓ Previous embedding progress: {progress['completed']:,}/{progress['total']:,} chunks"
+            )
             logger.info(f"[DOC_SEARCH] Last saved: {progress['timestamp']}")
 
         # Build index (will resume from cache if available)
@@ -1619,7 +1597,7 @@ class HashiCorpDocSearchIndex:
             "page_count": len(url_list),
             "model_name": self.model_name,
             "chunk_size_tokens": self.chunk_size,  # Now tokens, not chars
-            "chunk_overlap_tokens": self.chunk_overlap
+            "chunk_overlap_tokens": self.chunk_overlap,
         }
         self._save_metadata(metadata)
 
@@ -1634,7 +1612,7 @@ class HashiCorpDocSearchIndex:
         logger.info("[DOC_SEARCH] " + "=" * 70)
         logger.info("")
 
-    def _detect_version_query(self, query: str) -> Optional[Dict[str, Any]]:
+    def _detect_version_query(self, query: str) -> dict[str, Any] | None:
         """Detect version-specific queries and extract product/version metadata.
 
         Args:
@@ -1647,7 +1625,7 @@ class HashiCorpDocSearchIndex:
 
         # Pattern 1: "what's new in {product} {version}" or "{product} {version}"
         # Matches: vault 1.20, consul 1.21, nomad 1.9, boundary 0.18, terraform 1.10
-        version_pattern = r'(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)\s+v?(\d+\.\d+(?:\.\d+)?)'
+        version_pattern = r"(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)\s+v?(\d+\.\d+(?:\.\d+)?)"
         match = re.search(version_pattern, query_lower)
 
         if match:
@@ -1655,34 +1633,26 @@ class HashiCorpDocSearchIndex:
             version = match.group(2)
             logger.debug(f"[DOC_SEARCH] ✓ Detected version query: product={product}, version={version}")
             return {
-                'product': product,
-                'version': version,
-                'is_version_query': True,
-                'version_major_minor': '.'.join(version.split('.')[:2])  # e.g., "1.20" from "1.20.3"
+                "product": product,
+                "version": version,
+                "is_version_query": True,
+                "version_major_minor": ".".join(version.split(".")[:2]),  # e.g., "1.20" from "1.20.3"
             }
 
         # Pattern 2: "latest {product}" or "{product} latest"
-        latest_pattern = r'latest\s+(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)|(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)\s+latest'
+        latest_pattern = r"latest\s+(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)|(vault|consul|nomad|boundary|terraform|waypoint|packer|vagrant)\s+latest"
         match = re.search(latest_pattern, query_lower)
 
         if match:
             product = match.group(1) or match.group(2)
             logger.debug(f"[DOC_SEARCH] ✓ Detected 'latest' query: product={product}")
-            return {
-                'product': product,
-                'version': 'latest',
-                'is_version_query': True,
-                'is_latest_query': True
-            }
+            return {"product": product, "version": "latest", "is_version_query": True, "is_latest_query": True}
 
         return None
 
     def _prefilter_version_candidates(
-        self,
-        docs: List[Document],
-        version_info: Dict[str, Any],
-        max_candidates: int = 100
-    ) -> List[Document]:
+        self, docs: list[Document], version_info: dict[str, Any], max_candidates: int = 100
+    ) -> list[Document]:
         """Pre-filter candidates for version queries to reduce re-ranking time.
 
         For version queries, we can dramatically reduce the candidate pool before
@@ -1697,8 +1667,8 @@ class HashiCorpDocSearchIndex:
         Returns:
             Filtered list of documents prioritizing version-specific URLs
         """
-        version = version_info.get('version_major_minor') or version_info.get('version')
-        product = version_info.get('product')
+        version = version_info.get("version_major_minor") or version_info.get("version")
+        product = version_info.get("product")
 
         if not version or not product:
             return docs[:max_candidates]
@@ -1721,7 +1691,7 @@ class HashiCorpDocSearchIndex:
         top_candidates = []  # Top-scored from hybrid search
 
         for i, doc in enumerate(docs):
-            url = doc.metadata.get('url', '')
+            url = doc.metadata.get("url", "")
 
             # Check for exact version match
             has_version_match = any(pattern in url for pattern in version_patterns)
@@ -1737,12 +1707,14 @@ class HashiCorpDocSearchIndex:
         # Limit to max_candidates
         filtered = filtered[:max_candidates]
 
-        logger.debug(f"[DOC_SEARCH] 🎯 Pre-filtered version candidates: {len(docs)} → {len(filtered)} "
-                    f"({len(exact_matches)} exact matches + {len(top_candidates)} top candidates)")
+        logger.debug(
+            f"[DOC_SEARCH] 🎯 Pre-filtered version candidates: {len(docs)} → {len(filtered)} "
+            f"({len(exact_matches)} exact matches + {len(top_candidates)} top candidates)"
+        )
 
         return filtered
 
-    def _light_rerank(self, query: str, results: List[Dict[str, Any]], top_k: int = 80) -> List[Dict[str, Any]]:
+    def _light_rerank(self, query: str, results: list[dict[str, Any]], top_k: int = 80) -> list[dict[str, Any]]:
         """Fast first-pass reranking using lightweight cross-encoder.
 
         Reduces candidate count before heavy cross-encoder reranking.
@@ -1762,17 +1734,17 @@ class HashiCorpDocSearchIndex:
         logger.debug(f"[DOC_SEARCH] 🔸 Stage 1: Lightweight reranking {len(results)} results → top {top_k}")
 
         # Prepare query-document pairs for scoring
-        pairs = [[query, result['text']] for result in results]
+        pairs = [[query, result["text"]] for result in results]
 
         # Score all pairs with lightweight model (fast)
         scores = self.light_cross_encoder.predict(pairs)
 
         # Update results with lightweight scores
         for result, score in zip(results, scores):
-            result['light_rerank_score'] = float(score)
+            result["light_rerank_score"] = float(score)
 
         # Sort by lightweight scores (descending)
-        reranked = sorted(results, key=lambda x: x['light_rerank_score'], reverse=True)
+        reranked = sorted(results, key=lambda x: x["light_rerank_score"], reverse=True)
 
         # Return top k
         top_results = reranked[:top_k]
@@ -1781,12 +1753,7 @@ class HashiCorpDocSearchIndex:
 
         return top_results
 
-    def search(
-        self,
-        query: str,
-        top_k: int = 5,
-        product_filter: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    def search(self, query: str, top_k: int = 5, product_filter: str | None = None) -> list[dict[str, Any]]:
         """Search the index using hybrid search (BM25 + semantic) with optional query expansion.
 
         Args:
@@ -1797,7 +1764,7 @@ class HashiCorpDocSearchIndex:
         Returns:
             List of search results with text, metadata, and score
         """
-        logger.debug(f"[DOC_SEARCH] === SEARCH QUERY ===")
+        logger.debug("[DOC_SEARCH] === SEARCH QUERY ===")
         logger.debug(f"[DOC_SEARCH] Original query: '{query}'")
         logger.debug(f"[DOC_SEARCH] top_k: {top_k}")
         logger.debug(f"[DOC_SEARCH] product_filter: {product_filter}")
@@ -1825,9 +1792,11 @@ class HashiCorpDocSearchIndex:
             if self.enable_reranking:
                 # For version queries, retrieve MORE candidates (20x instead of 10x = 1600 candidates)
                 # This ensures version-specific release notes have a better chance of being retrieved
-                if version_info and version_info.get('is_version_query'):
+                if version_info and version_info.get("is_version_query"):
                     k = self.rerank_top_k * 20 if product_filter else self.rerank_top_k * 2
-                    logger.debug(f"[DOC_SEARCH] ⚡ Version query detected: increased to {k} candidates (20x multiplier)")
+                    logger.debug(
+                        f"[DOC_SEARCH] ⚡ Version query detected: increased to {k} candidates (20x multiplier)"
+                    )
                 else:
                     k = self.rerank_top_k * 10 if product_filter else self.rerank_top_k
                 logger.debug(f"[DOC_SEARCH] Re-ranking enabled: retrieving {k} candidates for cross-encoder")
@@ -1845,10 +1814,12 @@ class HashiCorpDocSearchIndex:
             if product_filter:
                 before_filter = len(docs)
                 docs = [d for d in docs if d.metadata.get("product", "").lower() == product_filter.lower()]
-                logger.debug(f"[DOC_SEARCH] After product filter ({product_filter}): {len(docs)} docs (removed {before_filter - len(docs)})")
+                logger.debug(
+                    f"[DOC_SEARCH] After product filter ({product_filter}): {len(docs)} docs (removed {before_filter - len(docs)})"
+                )
 
             # Pre-filter for version queries to reduce re-ranking time
-            if version_info and version_info.get('is_version_query') and self.enable_reranking:
+            if version_info and version_info.get("is_version_query") and self.enable_reranking:
                 docs = self._prefilter_version_candidates(docs, version_info, max_candidates=100)
 
             # Format results (ensemble doesn't return scores, so assign based on rank)
@@ -1876,15 +1847,17 @@ class HashiCorpDocSearchIndex:
                 # Cap at 1.0 for cleaner presentation
                 rank_score = min(1.0, rank_score)
 
-                results.append({
-                    "text": doc.page_content,
-                    "url": url,
-                    "product": doc.metadata.get("product", "unknown"),
-                    "source": doc.metadata.get("source", "web"),
-                    "score": float(rank_score),
-                    "distance": 0.0,  # Not applicable for hybrid
-                    "section_heading": doc.metadata.get("section_heading", "")
-                })
+                results.append(
+                    {
+                        "text": doc.page_content,
+                        "url": url,
+                        "product": doc.metadata.get("product", "unknown"),
+                        "source": doc.metadata.get("source", "web"),
+                        "score": float(rank_score),
+                        "distance": 0.0,  # Not applicable for hybrid
+                        "section_heading": doc.metadata.get("section_heading", ""),
+                    }
+                )
 
             # Re-sort by boosted scores (validated-designs should rank slightly higher)
             results.sort(key=lambda x: x["score"], reverse=True)
@@ -1895,7 +1868,7 @@ class HashiCorpDocSearchIndex:
             deduplicated_results = []
             for r in results:
                 # Extract base URL (without anchor)
-                base_url = r["url"].split('#')[0]
+                base_url = r["url"].split("#")[0]
                 count = url_counts.get(base_url, 0)
 
                 # Keep top 2 sections per page
@@ -1923,7 +1896,7 @@ class HashiCorpDocSearchIndex:
             logger.debug(f"[DOC_SEARCH] Final results (top_k={top_k}):")
             for i, r in enumerate(results, 1):
                 is_vd = "validated-designs" in r["url"]
-                rerank_info = f" [rerank={r.get('rerank_score', 0):.3f}]" if 'rerank_score' in r else ""
+                rerank_info = f" [rerank={r.get('rerank_score', 0):.3f}]" if "rerank_score" in r else ""
                 logger.debug(f"[DOC_SEARCH]   {i}. [score={r['score']:.3f}]{rerank_info} [VD={is_vd}] {r['url'][:80]}")
                 logger.debug(f"[DOC_SEARCH]      Content preview: {r['text'][:150]}...")
 
@@ -1939,16 +1912,9 @@ class HashiCorpDocSearchIndex:
 
             if product_filter:
                 filter_dict = {"product": product_filter.lower()}
-                docs_and_scores = self.vectorstore.similarity_search_with_score(
-                    query,
-                    k=k,
-                    filter=filter_dict
-                )
+                docs_and_scores = self.vectorstore.similarity_search_with_score(query, k=k, filter=filter_dict)
             else:
-                docs_and_scores = self.vectorstore.similarity_search_with_score(
-                    query,
-                    k=k
-                )
+                docs_and_scores = self.vectorstore.similarity_search_with_score(query, k=k)
 
             # Format results
             results = []
@@ -1961,15 +1927,17 @@ class HashiCorpDocSearchIndex:
                 section_anchor = doc.metadata.get("section_anchor", "")
                 url = f"{base_url}#{section_anchor}" if section_anchor else base_url
 
-                results.append({
-                    "text": doc.page_content,
-                    "url": url,
-                    "product": doc.metadata.get("product", "unknown"),
-                    "source": doc.metadata.get("source", "web"),
-                    "score": float(similarity),
-                    "distance": float(score),
-                    "section_heading": doc.metadata.get("section_heading", "")
-                })
+                results.append(
+                    {
+                        "text": doc.page_content,
+                        "url": url,
+                        "product": doc.metadata.get("product", "unknown"),
+                        "source": doc.metadata.get("source", "web"),
+                        "score": float(similarity),
+                        "distance": float(score),
+                        "section_heading": doc.metadata.get("section_heading", ""),
+                    }
+                )
 
             # Deduplicate by base URL (keep highest-scoring chunk per page, but multiple sections per page allowed)
             # We keep top 2 sections per page to provide context
@@ -1977,7 +1945,7 @@ class HashiCorpDocSearchIndex:
             deduplicated_results = []
             for r in results:
                 # Extract base URL (without anchor)
-                base_url = r["url"].split('#')[0]
+                base_url = r["url"].split("#")[0]
                 count = url_counts.get(base_url, 0)
 
                 # Keep top 2 sections per page
@@ -2007,12 +1975,12 @@ class HashiCorpDocSearchIndex:
         for i, r in enumerate(results, 1):
             logger.debug(f"[DOC_SEARCH] Result #{i}: {r['product'].upper()} - {r['url']}")
             logger.debug(f"[DOC_SEARCH]   Score: {r['score']:.3f}, Length: {len(r['text'])} chars")
-        logger.debug(f"[DOC_SEARCH] === END SEARCH RESULTS ===")
+        logger.debug("[DOC_SEARCH] === END SEARCH RESULTS ===")
         return results
 
 
 # Global instance
-_doc_search_index: Optional[HashiCorpDocSearchIndex] = None
+_doc_search_index: HashiCorpDocSearchIndex | None = None
 
 
 def get_doc_search_index() -> HashiCorpDocSearchIndex:
@@ -2023,7 +1991,7 @@ def get_doc_search_index() -> HashiCorpDocSearchIndex:
     return _doc_search_index
 
 
-def initialize_doc_search(force_update: bool = False, max_pages: Optional[int] = None):
+def initialize_doc_search(force_update: bool = False, max_pages: int | None = None):
     """Initialize the doc search index (call on startup).
 
     Args:
@@ -2061,11 +2029,7 @@ def search_docs(query: str, top_k: int = 5, product: str = "") -> str:
         return "Documentation search index not initialized. Please wait for initialization."
 
     # Perform search
-    results = index.search(
-        query,
-        top_k=top_k,
-        product_filter=product if product else None
-    )
+    results = index.search(query, top_k=top_k, product_filter=product if product else None)
 
     if not results:
         return f"No results found in HashiCorp developer documentation for: '{query}'"
@@ -2079,8 +2043,8 @@ def search_docs(query: str, top_k: int = 5, product: str = "") -> str:
         output.append(f"   Relevance: {result['score']:.2f}")
 
         # Show preview
-        text_preview = result['text'][:900]
-        if len(result['text']) > 900:
+        text_preview = result["text"][:900]
+        if len(result["text"]) > 900:
             text_preview += "..."
 
         output.append(f"   Content: {text_preview}")

@@ -16,7 +16,7 @@ from hashicorp_doc_search import get_doc_search_index
 # Configure logging
 logging.basicConfig(
     level=logging.WARNING,  # Suppress debug logs for cleaner output
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
 # Test configurations to try
@@ -36,7 +36,7 @@ TEST_CASES = [
         "product": "consul",
         "target_url_fragment": "consul-operating-guides-adoption",
         "target_content": ["max_stale", "10 years"],
-        "description": "Should find Consul Adoption Guide with 10 years default"
+        "description": "Should find Consul Adoption Guide with 10 years default",
     },
     {
         "name": "Vault Disk Throughput",
@@ -44,8 +44,8 @@ TEST_CASES = [
         "product": "vault",
         "target_url_fragment": "hardware-sizing-for-vault-servers",
         "target_content": ["75", "MB/s", "250"],
-        "description": "Should find hardware sizing table with 75+ MB/s and 250+ MB/s"
-    }
+        "description": "Should find hardware sizing table with 75+ MB/s and 250+ MB/s",
+    },
 ]
 
 
@@ -61,9 +61,7 @@ def test_weight_configuration(index, weight_config, test_case):
 
     # Search with larger top_k to see if target is in results
     results = index.search(
-        test_case["query"],
-        top_k=20,  # Get more results to check retrieval
-        product_filter=test_case["product"]
+        test_case["query"], top_k=20, product_filter=test_case["product"]  # Get more results to check retrieval
     )
 
     # Check if target chunk is retrieved
@@ -75,10 +73,7 @@ def test_weight_configuration(index, weight_config, test_case):
         # Check if this is the target chunk
         if test_case["target_url_fragment"] in result["url"]:
             # Also verify it has the expected content
-            has_content = all(
-                content.lower() in result["text"].lower()
-                for content in test_case["target_content"]
-            )
+            has_content = all(content.lower() in result["text"].lower() for content in test_case["target_content"])
             if has_content:
                 target_found = True
                 target_rank = i
@@ -96,9 +91,9 @@ def test_weight_configuration(index, weight_config, test_case):
 
 def main():
     """Run BM25 weight tuning tests."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("BM25 WEIGHT TUNING TEST")
-    print("="*80)
+    print("=" * 80)
     print("\nTesting different BM25 vs Semantic weight configurations")
     print("to find optimal balance for both test cases.\n")
 
@@ -133,21 +128,17 @@ def main():
             if results["target_found"]:
                 print(f"    ✅ FOUND at rank #{results['target_rank']} (score: {results['target_score']:.3f})")
             else:
-                print(f"    ❌ NOT FOUND in top-20 results")
+                print("    ❌ NOT FOUND in top-20 results")
                 print(f"    Top result: {results['top_result_url'][:60]}...")
 
         all_results[config["name"]] = config_results
 
     # Print summary table
-    print("\n\n" + "="*80)
+    print("\n\n" + "=" * 80)
     print("SUMMARY - BM25 WEIGHT TUNING RESULTS")
-    print("="*80)
+    print("=" * 80)
 
-    print("\n{:<30} {:<25} {:<25}".format(
-        "Configuration",
-        "Consul (Rank/Score)",
-        "Vault (Rank/Score)"
-    ))
+    print("\n{:<30} {:<25} {:<25}".format("Configuration", "Consul (Rank/Score)", "Vault (Rank/Score)"))
     print("-" * 80)
 
     best_config = None
@@ -169,11 +160,7 @@ def main():
             else "❌ Not found"
         )
 
-        print("{:<30} {:<25} {:<25}".format(
-            config["name"],
-            consul_str,
-            vault_str
-        ))
+        print("{:<30} {:<25} {:<25}".format(config["name"], consul_str, vault_str))
 
         # Calculate score: both found = 2, one found = 1, none = 0
         # Prefer lower ranks
@@ -187,14 +174,13 @@ def main():
             best_score = score
             best_config = config["name"]
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(f"RECOMMENDATION: {best_config}")
-    print("="*80)
+    print("=" * 80)
 
     # Check if any configuration retrieves the Vault chunk
     vault_found_in_any = any(
-        all_results[config["name"]]["Vault Disk Throughput"]["target_found"]
-        for config in WEIGHT_CONFIGS
+        all_results[config["name"]]["Vault Disk Throughput"]["target_found"] for config in WEIGHT_CONFIGS
     )
 
     if vault_found_in_any:
@@ -204,7 +190,7 @@ def main():
         print("This confirms it's a retrieval problem that requires query expansion or")
         print("multi-query generation to solve.")
 
-    print("\n" + "="*80 + "\n")
+    print("\n" + "=" * 80 + "\n")
 
     return 0 if vault_found_in_any else 1
 

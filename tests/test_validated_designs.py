@@ -1,29 +1,27 @@
 """Test validated-designs discovery."""
+
 import sys
 from pathlib import Path
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from hashicorp_doc_search import HashiCorpDocSearchIndex
 import logging
 
+from hashicorp_doc_search import HashiCorpDocSearchIndex
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
 
 def test_validated_designs_discovery():
     """Test that we can discover validated-designs pages."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("Testing Validated-Designs Discovery")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     index = HashiCorpDocSearchIndex(
-        cache_dir="./test_validated_designs",
-        max_pages=None,  # Don't limit for this test
-        rate_limit_delay=0.2
+        cache_dir="./test_validated_designs", max_pages=None, rate_limit_delay=0.2  # Don't limit for this test
     )
 
     # Test discovery
@@ -42,7 +40,7 @@ def test_validated_designs_discovery():
         print(f"{idx}. [{url_info['product'].upper()}] {url_info['url']}")
 
     # Check that we have multiple products
-    products = set(url_info['product'] for url_info in validated_designs)
+    products = set(url_info["product"] for url_info in validated_designs)
     print(f"\nProducts found: {', '.join(sorted(products))}")
 
     # Test that robots.txt override works
@@ -50,9 +48,9 @@ def test_validated_designs_discovery():
     can_fetch = index._can_fetch(test_url)
     print(f"\nRobots.txt override test: {'✅ PASS' if can_fetch else '❌ FAIL'}")
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("✅ Validated-designs discovery test completed!")
-    print("="*80 + "\n")
+    print("=" * 80 + "\n")
 
     return True
 
@@ -64,5 +62,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Test failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

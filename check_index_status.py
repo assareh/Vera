@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Check the status of the HashiCorp web documentation index build."""
 import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 
 def format_timestamp(iso_string):
     """Format ISO timestamp for display."""
@@ -12,12 +13,13 @@ def format_timestamp(iso_string):
     except:
         return iso_string
 
+
 def main():
     cache_dir = Path("hashicorp_web_docs")
 
-    print("="*80)
+    print("=" * 80)
     print("HashiCorp Web Documentation Index - Build Status")
-    print("="*80)
+    print("=" * 80)
     print()
 
     # Check if cache directory exists
@@ -31,7 +33,7 @@ def main():
     if url_list_file.exists():
         try:
             url_list = json.loads(url_list_file.read_text())
-            print(f"✅ URL Discovery: Complete")
+            print("✅ URL Discovery: Complete")
             print(f"   Total URLs: {len(url_list)}")
         except:
             print("⚠️  URL list file exists but is corrupted")
@@ -44,7 +46,7 @@ def main():
     pages_dir = cache_dir / "pages"
     if pages_dir.exists():
         cached_pages = list(pages_dir.glob("*.json"))
-        print(f"✅ Page Scraping: In progress or complete")
+        print("✅ Page Scraping: In progress or complete")
         print(f"   Cached pages: {len(cached_pages)}")
         if url_list_file.exists():
             try:
@@ -63,7 +65,7 @@ def main():
     if chunks_file.exists():
         try:
             chunks = json.loads(chunks_file.read_text())
-            print(f"✅ Chunking: Complete")
+            print("✅ Chunking: Complete")
             print(f"   Total chunks: {len(chunks)}")
         except:
             print("⚠️  Chunks file exists but is corrupted")
@@ -77,8 +79,8 @@ def main():
     if progress_file.exists():
         try:
             progress = json.loads(progress_file.read_text())
-            percent = (progress['completed'] / progress['total']) * 100
-            print(f"🔄 Embedding Generation: In progress")
+            percent = (progress["completed"] / progress["total"]) * 100
+            print("🔄 Embedding Generation: In progress")
             print(f"   Completed: {progress['completed']:,}/{progress['total']:,} chunks ({percent:.1f}%)")
             print(f"   Last saved: {format_timestamp(progress['timestamp'])}")
         except:
@@ -92,7 +94,7 @@ def main():
     index_file = cache_dir / "index" / "index.faiss"
     if index_file.exists():
         size_mb = index_file.stat().st_size / (1024 * 1024)
-        print(f"✅ FAISS Index: Built")
+        print("✅ FAISS Index: Built")
         print(f"   Index size: {size_mb:.1f} MB")
 
         # Check metadata
@@ -109,7 +111,7 @@ def main():
         print("⏳ FAISS Index: Not built yet")
 
     print()
-    print("="*80)
+    print("=" * 80)
 
     # Provide helpful next steps
     if not index_file.exists():
@@ -122,6 +124,7 @@ def main():
     else:
         print()
         print("✅ Index is complete and ready to use!")
+
 
 if __name__ == "__main__":
     main()

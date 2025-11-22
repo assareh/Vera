@@ -12,6 +12,7 @@ from hashicorp_doc_search import get_doc_search_index
 # Configure logging
 logging.basicConfig(level=logging.WARNING)
 
+
 def main():
     """Show full chunk content for debugging."""
     print("Loading doc search index...")
@@ -20,6 +21,7 @@ def main():
     if index.vectorstore is None:
         print("Index not loaded, initializing...")
         from hashicorp_doc_search import initialize_doc_search
+
         initialize_doc_search()
         print("Index initialized.\n")
 
@@ -37,16 +39,16 @@ def main():
         print(f"URL: {result['url']}")
         print("-" * 80)
         print("FULL CONTENT:")
-        print(result['text'])
+        print(result["text"])
         print("=" * 80)
         print()
 
         # Check for keywords
-        text_lower = result['text'].lower()
-        has_max_stale = 'max_stale' in text_lower
-        has_10_years = '10 years' in text_lower or '10 year' in text_lower
-        has_stale_reads = 'stale reads' in text_lower or 'stale read' in text_lower
-        has_section = '8.3.6' in result['text']
+        text_lower = result["text"].lower()
+        has_max_stale = "max_stale" in text_lower
+        has_10_years = "10 years" in text_lower or "10 year" in text_lower
+        has_stale_reads = "stale reads" in text_lower or "stale read" in text_lower
+        has_section = "8.3.6" in result["text"]
 
         print("Keywords found:")
         print(f"  - 'max_stale': {has_max_stale}")
@@ -58,6 +60,7 @@ def main():
         if has_max_stale and has_10_years:
             print("✅ This chunk contains the expected answer!")
             break
+
 
 if __name__ == "__main__":
     main()

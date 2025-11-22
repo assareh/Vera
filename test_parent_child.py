@@ -5,7 +5,9 @@ Tests with a small number of pages to verify the implementation.
 """
 
 import sys
+
 from hashicorp_doc_search import HashiCorpDocSearchIndex
+
 
 def test_parent_child_integration():
     """Test parent-child chunking with a small index."""
@@ -18,7 +20,7 @@ def test_parent_child_integration():
     index = HashiCorpDocSearchIndex(
         cache_dir="./hashicorp_web_docs_test",
         max_pages=10,  # Only process 10 pages for quick test
-        enable_reranking=False  # Disable reranking for faster test
+        enable_reranking=False,  # Disable reranking for faster test
     )
 
     # Build or load index
@@ -93,6 +95,7 @@ def test_parent_child_integration():
     except Exception as e:
         print(f"\n❌ Search failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

@@ -1,15 +1,17 @@
 """Tool definitions for Ivan."""
-import re
+
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any
+
+import ollama
+from duckduckgo_search import DDGS
 from langchain_core.tools import Tool
 from pydantic.v1 import BaseModel, Field
-from duckduckgo_search import DDGS
-import ollama
+
 import config
-from hashicorp_doc_search import search_docs
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -17,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 class CurrentDateInput(BaseModel):
     """Input schema for current date tool."""
+
     format: str = Field(
-        default="%Y-%m-%d",
-        description="The date format string (strftime format). Default is YYYY-MM-DD"
+        default="%Y-%m-%d", description="The date format string (strftime format). Default is YYYY-MM-DD"
     )
 
 
@@ -37,36 +39,28 @@ def get_current_date(format: str = "%Y-%m-%d") -> str:
 
 class CustomerNotesSearchInput(BaseModel):
     """Input schema for customer notes search tool."""
+
     customer_name: str = Field(
         default="",
-        description="The customer/account name to search for (e.g., 'Adobe', 'Microsoft'). Leave empty to search all customers."
+        description="The customer/account name to search for (e.g., 'Adobe', 'Microsoft'). Leave empty to search all customers.",
     )
     content_query: str = Field(
-        default="",
-        description="Search for specific content within meeting notes. Leave empty to just list notes."
+        default="", description="Search for specific content within meeting notes. Leave empty to just list notes."
     )
-    limit: int = Field(
-        default=10,
-        description="Maximum number of results to return. Default is 10, max is 50."
-    )
-    sort_by_date: bool = Field(
-        default=True,
-        description="Sort results by date (newest first). Default is True."
-    )
+    limit: int = Field(default=10, description="Maximum number of results to return. Default is 10, max is 50.")
+    sort_by_date: bool = Field(default=True, description="Sort results by date (newest first). Default is True.")
 
 
 class ReadCustomerNoteInput(BaseModel):
     """Input schema for reading a customer note file."""
+
     file_path: str = Field(
         description="The relative path to the note file within Customer_Notes directory (e.g., 'A/Adobe/10_Meetings/2025-01-15_Discovery_Call.md')"
     )
 
 
 def search_customer_notes(
-    customer_name: str = "",
-    content_query: str = "",
-    limit: int = 10,
-    sort_by_date: bool = True
+    customer_name: str = "", content_query: str = "", limit: int = 10, sort_by_date: bool = True
 ) -> str:
     """Search through customer meeting notes.
 
@@ -85,7 +79,7 @@ def search_customer_notes(
     """
     notes_path = Path(config.CUSTOMER_NOTES_DIR)
 
-    logger.info(f"[CUSTOMER_NOTES_SEARCH] Starting search")
+    logger.info("[CUSTOMER_NOTES_SEARCH] Starting search")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Directory: {notes_path.absolute()}")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer (original): {customer_name or 'ALL'}")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Content query: {content_query or 'NONE'}")
@@ -124,11 +118,11 @@ def search_customer_notes(
     # Limit results
     limit = min(max(1, limit), 50)
 
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     # Search through the hierarchical structure
     # Pattern: Customer_Notes/[Letter]/[Customer]/10_Meetings/*.md
-    logger.info(f"[CUSTOMER_NOTES_SEARCH] Scanning directory structure...")
+    logger.info("[CUSTOMER_NOTES_SEARCH] Scanning directory structure...")
     for letter_dir in notes_path.iterdir():
         if not letter_dir.is_dir():
             logger.debug(f"[CUSTOMER_NOTES_SEARCH] Skipping non-directory: {letter_dir.name}")
@@ -150,14 +144,18 @@ def search_customer_notes(
                 matches = any(term in customer_dir_lower for term in search_terms)
 
                 if not matches:
-                    logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' doesn't match any search terms {search_terms}, skipping")
+                    logger.debug(
+                        f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' doesn't match any search terms {search_terms}, skipping"
+                    )
                     continue
                 else:
                     logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' matches search terms")
 
             # Look for meetings directory (could be "10_Meetings" or similar)
             meetings_dirs = [d for d in customer_dir.iterdir() if d.is_dir() and "meeting" in d.name.lower()]
-            logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}': found {len(meetings_dirs)} meeting directories")
+            logger.info(
+                f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}': found {len(meetings_dirs)} meeting directories"
+            )
 
             for meetings_dir in meetings_dirs:
                 logger.debug(f"[CUSTOMER_NOTES_SEARCH] Scanning meeting directory: {meetings_dir.name}")
@@ -173,12 +171,14 @@ def search_customer_notes(
 
                         # If content query is provided, check if it matches
                         if content_query and content_query.lower() not in content.lower():
-                            logger.debug(f"[CUSTOMER_NOTES_SEARCH] File '{file_path.name}' doesn't match content query, skipping")
+                            logger.debug(
+                                f"[CUSTOMER_NOTES_SEARCH] File '{file_path.name}' doesn't match content query, skipping"
+                            )
                             continue
 
                         # Extract date from filename if possible (format: YYYY-MM-DD_...)
                         date_str = ""
-                        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', file_path.name)
+                        date_match = re.search(r"(\d{4}-\d{2}-\d{2})", file_path.name)
                         if date_match:
                             date_str = date_match.group(1)
 
@@ -186,16 +186,18 @@ def search_customer_notes(
                         relative_path = file_path.relative_to(notes_path)
 
                         # Get first few lines as preview
-                        preview_lines = content.split('\n')[:5]
-                        preview = '\n'.join(line for line in preview_lines if line.strip())
+                        preview_lines = content.split("\n")[:5]
+                        preview = "\n".join(line for line in preview_lines if line.strip())
 
-                        results.append({
-                            "customer": customer_dir.name,
-                            "file": str(relative_path),
-                            "full_path": str(file_path),
-                            "date": date_str,
-                            "preview": preview[:200] + "..." if len(preview) > 200 else preview
-                        })
+                        results.append(
+                            {
+                                "customer": customer_dir.name,
+                                "file": str(relative_path),
+                                "full_path": str(file_path),
+                                "date": date_str,
+                                "preview": preview[:200] + "..." if len(preview) > 200 else preview,
+                            }
+                        )
                         logger.info(f"[CUSTOMER_NOTES_SEARCH] Added result: {file_path.name} (date: {date_str})")
 
                     except Exception as e:
@@ -219,7 +221,7 @@ def search_customer_notes(
     # Sort by date if requested
     if sort_by_date:
         results.sort(key=lambda x: x["date"], reverse=True)
-        logger.debug(f"[CUSTOMER_NOTES_SEARCH] Results sorted by date")
+        logger.debug("[CUSTOMER_NOTES_SEARCH] Results sorted by date")
 
     # Limit results
     results = results[:limit]
@@ -230,12 +232,12 @@ def search_customer_notes(
 
     for idx, result in enumerate(results, 1):
         output.append(f"\n{idx}. [{result['customer']}] {result['file']}")
-        if result['date']:
+        if result["date"]:
             output.append(f"   Date: {result['date']}")
         output.append(f"   Preview: {result['preview']}")
         output.append("")
 
-    output.append(f"\nTo read full content, use read_customer_note with the file path.")
+    output.append("\nTo read full content, use read_customer_note with the file path.")
 
     return "\n".join(output)
 
@@ -273,22 +275,20 @@ def read_customer_note(file_path: str) -> str:
         content = full_path.read_text(encoding="utf-8")
         return f"📄 {file_path}\n\n{content}"
     except Exception as e:
-        return f"Error reading note file: {str(e)}"
+        return f"Error reading note file: {e!s}"
 
 
 class HashiCorpDocsSearchInput(BaseModel):
     """Input schema for HashiCorp docs search tool."""
+
     query: str = Field(
         description="The search query for HashiCorp documentation (e.g., 'Terraform module syntax', 'Vault authentication methods', 'Consul service mesh')"
     )
     product: str = Field(
         default="",
-        description="Optional: Specific HashiCorp product to search (e.g., 'terraform', 'vault', 'consul', 'nomad', 'packer', 'waypoint'). Leave empty to search all products."
+        description="Optional: Specific HashiCorp product to search (e.g., 'terraform', 'vault', 'consul', 'nomad', 'packer', 'waypoint'). Leave empty to search all products.",
     )
-    max_results: int = Field(
-        default=5,
-        description="Maximum number of results to return. Default is 5, max is 10."
-    )
+    max_results: int = Field(default=5, description="Maximum number of results to return. Default is 5, max is 10.")
 
 
 def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -> str:
@@ -311,7 +311,7 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
     Returns:
         Formatted search results from HashiCorp developer documentation with actual URLs
     """
-    logger.info(f"[HASHICORP_SEARCH] Starting search")
+    logger.info("[HASHICORP_SEARCH] Starting search")
     logger.info(f"[HASHICORP_SEARCH] Query: {query}")
     logger.info(f"[HASHICORP_SEARCH] Product: {product or 'ALL'}")
 
@@ -335,10 +335,12 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
         # Check if we need web search fallback
         use_web_fallback = False
         if not raw_results:
-            logger.info(f"[HASHICORP_SEARCH] No results from local index, falling back to web search")
+            logger.info("[HASHICORP_SEARCH] No results from local index, falling back to web search")
             use_web_fallback = True
-        elif raw_results[0]['score'] < CONFIDENCE_THRESHOLD:
-            logger.info(f"[HASHICORP_SEARCH] Low confidence ({raw_results[0]['score']:.2f} < {CONFIDENCE_THRESHOLD}), falling back to web search")
+        elif raw_results[0]["score"] < CONFIDENCE_THRESHOLD:
+            logger.info(
+                f"[HASHICORP_SEARCH] Low confidence ({raw_results[0]['score']:.2f} < {CONFIDENCE_THRESHOLD}), falling back to web search"
+            )
             use_web_fallback = True
 
         # Format local results
@@ -349,8 +351,8 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
                 local_output.append(f"\n{idx}. [{result['product'].upper()}]")
                 local_output.append(f"   URL: {result['url']}")
                 local_output.append(f"   Relevance: {result['score']:.2f}")
-                text_preview = result['text'][:900]
-                if len(result['text']) > 900:
+                text_preview = result["text"][:900]
+                if len(result["text"]) > 900:
                     text_preview += "..."
                 local_output.append(f"   Content: {text_preview}")
                 local_output.append("")
@@ -358,15 +360,15 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
         # If confidence is high, return local results only
         if not use_web_fallback:
             results = "\n".join(local_output)
-            logger.info(f"[HASHICORP_SEARCH] High confidence results, returning local index only")
-            logger.debug(f"[HASHICORP_SEARCH] === TOOL RETURNING TO LLM ===")
+            logger.info("[HASHICORP_SEARCH] High confidence results, returning local index only")
+            logger.debug("[HASHICORP_SEARCH] === TOOL RETURNING TO LLM ===")
             logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {results[:500]}")
-            logger.debug(f"[HASHICORP_SEARCH] === END TOOL RETURN ===")
+            logger.debug("[HASHICORP_SEARCH] === END TOOL RETURN ===")
             return results
 
         # Add web search fallback
         try:
-            logger.info(f"[HASHICORP_SEARCH] Fetching web search results...")
+            logger.info("[HASHICORP_SEARCH] Fetching web search results...")
             # Add site filter for HashiCorp docs
             web_query = f"{query} site:developer.hashicorp.com"
 
@@ -375,7 +377,7 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
                 if config.OLLAMA_API_KEY:
                     web_results = ollama_web_search(web_query, max_results=5)
                 else:
-                    logger.info(f"[HASHICORP_SEARCH] OLLAMA_API_KEY not set, falling back to DuckDuckGo")
+                    logger.info("[HASHICORP_SEARCH] OLLAMA_API_KEY not set, falling back to DuckDuckGo")
                     web_results = ddg_web_search(web_query, max_results=5)
             except Exception as web_error:
                 logger.warning(f"[HASHICORP_SEARCH] Web search failed: {web_error}, trying DuckDuckGo")
@@ -392,9 +394,9 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
                 output = []
                 if local_output:
                     output.extend(local_output)
-                    output.append("\n" + "="*80)
+                    output.append("\n" + "=" * 80)
                     output.append("⚠️  Note: Local index confidence was low. Adding live web search results below:")
-                    output.append("="*80 + "\n")
+                    output.append("=" * 80 + "\n")
                 else:
                     output.append("No results in local index. Showing live web search results:\n")
 
@@ -406,12 +408,12 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
                     output.append("")
 
                 combined_results = "\n".join(output)
-                logger.debug(f"[HASHICORP_SEARCH] === TOOL RETURNING TO LLM (with web fallback) ===")
+                logger.debug("[HASHICORP_SEARCH] === TOOL RETURNING TO LLM (with web fallback) ===")
                 logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {combined_results[:500]}")
-                logger.debug(f"[HASHICORP_SEARCH] === END TOOL RETURN ===")
+                logger.debug("[HASHICORP_SEARCH] === END TOOL RETURN ===")
                 return combined_results
             else:
-                logger.warning(f"[HASHICORP_SEARCH] Web search returned no results")
+                logger.warning("[HASHICORP_SEARCH] Web search returned no results")
                 if local_output:
                     return "\n".join(local_output)
                 else:
@@ -423,14 +425,14 @@ def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -
             if local_output:
                 return "\n".join(local_output)
             else:
-                return f"Search completed but web fallback failed: {str(web_error)}"
+                return f"Search completed but web fallback failed: {web_error!s}"
 
     except Exception as e:
         logger.error(f"[HASHICORP_SEARCH] Search failed: {e}")
-        return f"Error searching HashiCorp documentation: {str(e)}"
+        return f"Error searching HashiCorp documentation: {e!s}"
 
 
-def ollama_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
+def ollama_web_search(query: str, max_results: int = 10) -> list[dict[str, str]]:
     """Search the web using Ollama's search API.
 
     Args:
@@ -458,9 +460,9 @@ def ollama_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]
         results = []
 
         # Parse response: response is a dict with 'results' key containing list of results
-        if hasattr(response, 'get'):
-            items = response.get('results', [])
-        elif hasattr(response, 'results'):
+        if hasattr(response, "get"):
+            items = response.get("results", [])
+        elif hasattr(response, "results"):
             items = response.results
         else:
             # If response is already a list
@@ -468,11 +470,13 @@ def ollama_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]
 
         # Limit to max_results
         for item in items[:max_results]:
-            results.append({
-                "title": item.get("title", "No title"),
-                "url": item.get("url", ""),
-                "description": item.get("content", "No description")
-            })
+            results.append(
+                {
+                    "title": item.get("title", "No title"),
+                    "url": item.get("url", ""),
+                    "description": item.get("content", "No description"),
+                }
+            )
 
         logger.info(f"[OLLAMA_SEARCH] Found {len(results)} results")
         return results
@@ -480,11 +484,12 @@ def ollama_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]
     except Exception as e:
         logger.error(f"[OLLAMA_SEARCH] Search failed: {e}")
         import traceback
+
         logger.error(f"[OLLAMA_SEARCH] Traceback: {traceback.format_exc()}")
         raise
 
 
-def ddg_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
+def ddg_web_search(query: str, max_results: int = 10) -> list[dict[str, str]]:
     """Search the web using DuckDuckGo (free, rate-limited).
 
     Args:
@@ -501,6 +506,7 @@ def ddg_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
 
     try:
         import warnings
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*AsyncSession.*")
             with DDGS() as ddgs:
@@ -508,11 +514,13 @@ def ddg_web_search(query: str, max_results: int = 10) -> List[Dict[str, str]]:
 
         results = []
         for item in raw_results:
-            results.append({
-                "title": item.get("title", "No title"),
-                "url": item.get("href", ""),
-                "description": item.get("body", "No description")
-            })
+            results.append(
+                {
+                    "title": item.get("title", "No title"),
+                    "url": item.get("href", ""),
+                    "description": item.get("body", "No description"),
+                }
+            )
 
         logger.info(f"[DDG_SEARCH] Found {len(results)} results")
         return results
@@ -579,13 +587,11 @@ def web_search(query: str, max_results: int = 10, site: str = "") -> str:
 
 class WebSearchInput(BaseModel):
     """Input schema for web search tool."""
+
     query: str = Field(
         description="The search query (e.g., 'Python async programming best practices', 'Docker container networking')"
     )
-    max_results: int = Field(
-        default=10,
-        description="Maximum number of results to return. Default is 10."
-    )
+    max_results: int = Field(default=10, description="Maximum number of results to return. Default is 10.")
 
 
 # Define the tools
@@ -593,35 +599,35 @@ current_date_tool = Tool(
     name="get_current_date",
     description="Get the current date and time. Useful when you need to know what day it is or the current date. You can optionally specify a format string.",
     func=get_current_date,
-    args_schema=CurrentDateInput
+    args_schema=CurrentDateInput,
 )
 
 customer_notes_search_tool = Tool(
     name="search_customer_notes",
     description="Search through customer meeting notes in the hierarchical Customer_Notes directory. Use this when preparing SE weekly updates to gather recent customer activity, or when the user asks about specific customer meetings. Searches by customer name, content, and returns notes sorted by date (newest first).",
     func=search_customer_notes,
-    args_schema=CustomerNotesSearchInput
+    args_schema=CustomerNotesSearchInput,
 )
 
 read_customer_note_tool = Tool(
     name="read_customer_note",
     description="Read the full content of a specific customer meeting note. Use this after finding relevant notes with search_customer_notes to get complete details about a meeting.",
     func=read_customer_note,
-    args_schema=ReadCustomerNoteInput
+    args_schema=ReadCustomerNoteInput,
 )
 
 hashicorp_docs_search_tool = Tool(
     name="search_hashicorp_docs",
     description="Search HashiCorp product documentation including validated design PDFs and online docs (Terraform, Vault, Consul, Nomad, Packer, Waypoint, etc.). Provides comprehensive results from both official validated design documents and web documentation. Use this when users ask questions about HashiCorp products, features, configurations, best practices, or architecture patterns.",
     func=search_hashicorp_docs,
-    args_schema=HashiCorpDocsSearchInput
+    args_schema=HashiCorpDocsSearchInput,
 )
 
 web_search_tool = Tool(
     name="web_search",
     description="Search the web for general information using Ollama API (if configured) or DuckDuckGo. Use this for finding current information, documentation, tutorials, Stack Overflow answers, or any online resources. Returns titles, URLs, and descriptions of relevant pages.",
     func=web_search,
-    args_schema=WebSearchInput
+    args_schema=WebSearchInput,
 )
 
 # Export all tools
@@ -630,5 +636,5 @@ ALL_TOOLS = [
     customer_notes_search_tool,
     read_customer_note_tool,
     hashicorp_docs_search_tool,
-    web_search_tool
+    web_search_tool,
 ]

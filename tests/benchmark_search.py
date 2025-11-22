@@ -11,16 +11,15 @@ Usage:
     python tests/benchmark_search.py --compare v1 v2    # Compare two indices
 """
 
-import sys
-import os
-import time
 import json
+import os
 import statistics
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Any, Optional
+import sys
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from hashicorp_doc_search import HashiCorpDocSearchIndex
 
@@ -28,17 +27,19 @@ from hashicorp_doc_search import HashiCorpDocSearchIndex
 @dataclass
 class QueryMetrics:
     """Metrics for a single query execution."""
+
     query: str
     latency_ms: float
     num_results: int
     top_result_url: str
     top_result_score: float
-    rerank_latency_ms: Optional[float] = None
+    rerank_latency_ms: float | None = None
 
 
 @dataclass
 class BenchmarkResults:
     """Aggregated benchmark results."""
+
     config_name: str
     num_queries: int
 
@@ -77,32 +78,27 @@ FULL_QUERIES = [
     "consul agent installation",
     "nomad server setup",
     "boundary controller configuration",
-
     # Configuration queries
     "consul stale reads default",
     "vault seal configuration",
     "nomad driver configuration",
     "boundary worker filters",
-
     # Feature queries
     "consul service mesh",
     "vault dynamic secrets",
     "nomad autoscaling",
     "boundary session recording",
-
     # Version-specific queries
     "what's new in vault 1.20",
     "vault 1.21 release notes",
     "consul 1.21 features",
     "nomad 1.9 changes",
     "boundary 0.18 release",
-
     # API queries
     "vault api authentication",
     "consul http api",
     "nomad rest api",
     "boundary api tokens",
-
     # Troubleshooting queries
     "vault seal issues",
     "consul gossip encryption",
@@ -133,34 +129,21 @@ def run_query(index: HashiCorpDocSearchIndex, query: str, top_k: int = 5) -> Que
                 query=query,
                 latency_ms=latency_ms,
                 num_results=len(results),
-                top_result_url=results[0].get('url', 'N/A'),
-                top_result_score=results[0].get('score', 0.0)
+                top_result_url=results[0].get("url", "N/A"),
+                top_result_score=results[0].get("score", 0.0),
             )
         else:
             return QueryMetrics(
-                query=query,
-                latency_ms=latency_ms,
-                num_results=0,
-                top_result_url='N/A',
-                top_result_score=0.0
+                query=query, latency_ms=latency_ms, num_results=0, top_result_url="N/A", top_result_score=0.0
             )
     except Exception as e:
         print(f"❌ Query failed: {query}")
         print(f"   Error: {e}")
-        return QueryMetrics(
-            query=query,
-            latency_ms=0.0,
-            num_results=0,
-            top_result_url='ERROR',
-            top_result_score=0.0
-        )
+        return QueryMetrics(query=query, latency_ms=0.0, num_results=0, top_result_url="ERROR", top_result_score=0.0)
 
 
 def run_benchmark(
-    index: HashiCorpDocSearchIndex,
-    queries: List[str],
-    config_name: str,
-    warmup: bool = True
+    index: HashiCorpDocSearchIndex, queries: list[str], config_name: str, warmup: bool = True
 ) -> BenchmarkResults:
     """Run benchmark with given queries and configuration."""
 
@@ -214,12 +197,12 @@ def run_benchmark(
         num_parent_chunks=len(index.parent_chunks),
         num_child_chunks=len(index.child_to_parent),
         enable_reranking=index.enable_reranking,
-        index_version=getattr(index, '_index_version', 'unknown')
+        index_version=getattr(index, "_index_version", "unknown"),
     )
 
     # Print results
     print(f"\n{'Results':-^80}")
-    print(f"  Latency (ms):")
+    print("  Latency (ms):")
     print(f"    p50: {results.latency_p50:7.1f}")
     print(f"    p95: {results.latency_p95:7.1f}")
     print(f"    p99: {results.latency_p99:7.1f}")
@@ -251,11 +234,11 @@ def check_critical_queries(index: HashiCorpDocSearchIndex) -> int:
         if not results:
             print(f"❌ FAIL: {query}")
             print(f"   Expected: {expected_url_prefix}")
-            print(f"   Got: No results")
+            print("   Got: No results")
             failures += 1
             continue
 
-        top_url = results[0].get('url', '')
+        top_url = results[0].get("url", "")
 
         if top_url.startswith(expected_url_prefix):
             print(f"✅ PASS: {query}")
@@ -280,7 +263,7 @@ def save_results(results: BenchmarkResults, output_dir: Path):
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     filename = output_dir / f"benchmark_{timestamp}.json"
 
-    with open(filename, 'w') as f:
+    with open(filename, "w") as f:
         json.dump(asdict(results), f, indent=2)
 
     print(f"\n💾 Results saved to: {filename}")
@@ -296,19 +279,19 @@ def compare_results(results1: BenchmarkResults, results2: BenchmarkResults):
     print(f"{'-'*30} {'-'*15} {'-'*15} {'-'*15}")
 
     metrics = [
-        ('Latency p50 (ms)', results1.latency_p50, results2.latency_p50),
-        ('Latency p95 (ms)', results1.latency_p95, results2.latency_p95),
-        ('Latency p99 (ms)', results1.latency_p99, results2.latency_p99),
-        ('Throughput (q/s)', results1.queries_per_second, results2.queries_per_second),
+        ("Latency p50 (ms)", results1.latency_p50, results2.latency_p50),
+        ("Latency p95 (ms)", results1.latency_p95, results2.latency_p95),
+        ("Latency p99 (ms)", results1.latency_p99, results2.latency_p99),
+        ("Throughput (q/s)", results1.queries_per_second, results2.queries_per_second),
     ]
 
     for name, val1, val2 in metrics:
-        if 'Throughput' in name:
+        if "Throughput" in name:
             change = ((val2 - val1) / val1) * 100 if val1 > 0 else 0
-            arrow = '↑' if change > 0 else '↓'
+            arrow = "↑" if change > 0 else "↓"
         else:
             change = ((val2 - val1) / val1) * 100 if val1 > 0 else 0
-            arrow = '↓' if change < 0 else '↑'
+            arrow = "↓" if change < 0 else "↑"
 
         print(f"{name:<30} {val1:>15.2f} {val2:>15.2f} {arrow}{abs(change):>13.1f}%")
 
@@ -316,31 +299,28 @@ def compare_results(results1: BenchmarkResults, results2: BenchmarkResults):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description='Benchmark HashiCorp documentation search')
-    parser.add_argument('--full', action='store_true', help='Run full benchmark (30+ queries)')
-    parser.add_argument('--no-rerank', action='store_true', help='Disable reranking')
-    parser.add_argument('--cache-dir', default='./hashicorp_web_docs', help='Cache directory')
-    parser.add_argument('--output', default='./benchmark_results', help='Output directory for results')
-    parser.add_argument('--critical-only', action='store_true', help='Only test critical queries')
+    parser = argparse.ArgumentParser(description="Benchmark HashiCorp documentation search")
+    parser.add_argument("--full", action="store_true", help="Run full benchmark (30+ queries)")
+    parser.add_argument("--no-rerank", action="store_true", help="Disable reranking")
+    parser.add_argument("--cache-dir", default="./hashicorp_web_docs", help="Cache directory")
+    parser.add_argument("--output", default="./benchmark_results", help="Output directory for results")
+    parser.add_argument("--critical-only", action="store_true", help="Only test critical queries")
 
     args = parser.parse_args()
 
     queries = FULL_QUERIES if args.full else QUICK_QUERIES
 
-    print("="*80)
+    print("=" * 80)
     print("HASHICORP DOCUMENTATION SEARCH BENCHMARK")
-    print("="*80)
-    print(f"Configuration:")
+    print("=" * 80)
+    print("Configuration:")
     print(f"  Cache dir: {args.cache_dir}")
     print(f"  Queries: {'Full' if args.full else 'Quick'} ({len(queries)} queries)")
     print(f"  Reranking: {'Disabled' if args.no_rerank else 'Enabled'}")
 
     # Create index
-    print(f"\n📦 Loading search index...")
-    index = HashiCorpDocSearchIndex(
-        cache_dir=args.cache_dir,
-        enable_reranking=not args.no_rerank
-    )
+    print("\n📦 Loading search index...")
+    index = HashiCorpDocSearchIndex(cache_dir=args.cache_dir, enable_reranking=not args.no_rerank)
 
     print("🔨 Ensuring index is built...")
     index.initialize()

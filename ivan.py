@@ -1,20 +1,21 @@
 """Ivan - A Flask chatbot with tool calling capabilities."""
-import os
+
 import json
-import time
-import subprocess
-import signal
-import sys
-import re
-import threading
 import logging
-from datetime import datetime
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from collections.abc import Generator
 from pathlib import Path
-from typing import Optional, Dict, Any, Generator
-from flask import Flask, request, jsonify, Response, stream_with_context
-from flask_cors import CORS
-import requests
+from typing import Any
+
 import click
+import requests
+from flask import Flask, Response, jsonify, request, stream_with_context
+from flask_cors import CORS
 
 # Disable tokenizers parallelism warning when forking
 # (We load embeddings before Flask potentially forks workers)
@@ -24,8 +25,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 print("Loading Ivan... (Initializing AI libraries, this may take 5-15 seconds...)")
 
 import config
-from tools import ALL_TOOLS
 from hashicorp_doc_search import initialize_doc_search
+from tools import ALL_TOOLS
 
 # Gemini imports (lazy loaded when needed)
 _gemini_client = None
@@ -39,14 +40,11 @@ tools_logger = logging.getLogger("ivan.tools")
 if config.DEBUG_TOOLS:
     # Create file handler
     log_file = Path(config.DEBUG_TOOLS_LOG_FILE)
-    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
 
     # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     file_handler.setFormatter(formatter)
 
     # Configure multiple loggers to write to the debug file
@@ -56,14 +54,14 @@ if config.DEBUG_TOOLS:
         logger_obj.addHandler(file_handler)
 
     print(f"Tool debug logging enabled: {log_file.absolute()}")
-    print(f"  Logging: ivan.tools, tools, hashicorp_doc_search")
+    print("  Logging: ivan.tools, tools, hashicorp_doc_search")
 else:
     tools_logger.setLevel(logging.WARNING)
 
 # Global variables for caching
-_system_prompt_cache: Optional[str] = None
-_system_prompt_mtime: Optional[float] = None
-_webui_process: Optional[subprocess.Popen] = None
+_system_prompt_cache: str | None = None
+_system_prompt_mtime: float | None = None
+_webui_process: subprocess.Popen | None = None
 
 
 def get_system_prompt() -> str:
@@ -120,17 +118,14 @@ def get_gemini_client():
             os.environ["GOOGLE_CLOUD_LOCATION"] = config.GOOGLE_CLOUD_LOCATION
 
         # Create client with v1 API
-        _gemini_client = genai.Client(
-            http_options=HttpOptions(api_version="v1")
-        )
+        _gemini_client = genai.Client(http_options=HttpOptions(api_version="v1"))
 
     return _gemini_client
 
 
-def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0) -> Dict[str, Any]:
+def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0) -> dict[str, Any]:
     """Call Gemini with tool support using the Google Gen AI SDK."""
-    from google import genai
-    from google.genai.types import Tool, FunctionDeclaration, GenerateContentConfig
+    from google.genai.types import FunctionDeclaration, GenerateContentConfig, Tool
 
     client = get_gemini_client()
 
@@ -149,25 +144,18 @@ def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0
         parameters = {
             "type": schema.get("type", "object"),
             "properties": schema.get("properties", {}),
-            "required": schema.get("required", [])
+            "required": schema.get("required", []),
         }
 
         function_declarations.append(
-            FunctionDeclaration(
-                name=tool.name,
-                description=tool.description,
-                parameters=parameters
-            )
+            FunctionDeclaration(name=tool.name, description=tool.description, parameters=parameters)
         )
 
     # Create tools config
     gemini_tools = [Tool(function_declarations=function_declarations)] if function_declarations else []
 
     # Create generation config
-    config_obj = GenerateContentConfig(
-        tools=gemini_tools,
-        temperature=temperature
-    )
+    config_obj = GenerateContentConfig(tools=gemini_tools, temperature=temperature)
 
     # Convert messages to Gemini format
     # Gemini expects a simple list of content parts or a string
@@ -181,31 +169,15 @@ def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0
         role = "user" if msg["role"] == "user" else "model"
         if msg["role"] == "tool":
             # Tool results need special handling
-            contents.append({
-                "role": "function",
-                "parts": [{"text": msg["content"]}]
-            })
+            contents.append({"role": "function", "parts": [{"text": msg["content"]}]})
         else:
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
+            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
 
     # Call Gemini API
-    response = client.models.generate_content(
-        model=config.BACKEND_MODEL,
-        contents=contents,
-        config=config_obj
-    )
+    response = client.models.generate_content(model=config.BACKEND_MODEL, contents=contents, config=config_obj)
 
     # Convert response to OpenAI-like format
-    result = {
-        "message": {
-            "role": "assistant",
-            "content": ""
-        },
-        "tool_calls": []
-    }
+    result = {"message": {"role": "assistant", "content": ""}, "tool_calls": []}
 
     if response.candidates and len(response.candidates) > 0:
         candidate = response.candidates[0]
@@ -216,14 +188,16 @@ def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0
                 elif hasattr(part, "function_call") and part.function_call:
                     # Convert function call to OpenAI format
                     func_call = part.function_call
-                    result["tool_calls"].append({
-                        "id": f"call_{int(time.time())}",
-                        "type": "function",
-                        "function": {
-                            "name": func_call.name,
-                            "arguments": dict(func_call.args) if func_call.args else {}
+                    result["tool_calls"].append(
+                        {
+                            "id": f"call_{int(time.time())}",
+                            "type": "function",
+                            "function": {
+                                "name": func_call.name,
+                                "arguments": dict(func_call.args) if func_call.args else {},
+                            },
                         }
-                    })
+                    )
 
     return result
 
@@ -245,11 +219,7 @@ def call_ollama_with_tools(messages: list, tools: list, temperature: float = 0.0
 
         tool_def = {
             "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": schema
-            }
+            "function": {"name": tool.name, "description": tool.description, "parameters": schema},
         }
         ollama_tools.append(tool_def)
 
@@ -258,9 +228,7 @@ def call_ollama_with_tools(messages: list, tools: list, temperature: float = 0.0
         "messages": messages,
         "tools": ollama_tools,
         "stream": stream,
-        "options": {
-            "temperature": temperature
-        }
+        "options": {"temperature": temperature},
     }
 
     response = requests.post(endpoint, json=payload, stream=stream)
@@ -286,11 +254,7 @@ def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0
 
         tool_def = {
             "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": schema
-            }
+            "function": {"name": tool.name, "description": tool.description, "parameters": schema},
         }
         openai_tools.append(tool_def)
 
@@ -299,7 +263,7 @@ def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0
         "messages": messages,
         "tools": openai_tools,
         "temperature": temperature,
-        "stream": stream
+        "stream": stream,
     }
 
     response = requests.post(endpoint, json=payload, stream=stream)
@@ -308,11 +272,11 @@ def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0
     return response
 
 
-def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
+def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
     """Execute a tool by name with given input."""
     # Log tool call
     if config.DEBUG_TOOLS:
-        tools_logger.debug("="*80)
+        tools_logger.debug("=" * 80)
         tools_logger.debug(f"TOOL CALL: {tool_name}")
         tools_logger.debug(f"INPUT: {json.dumps(tool_input, indent=2)}")
 
@@ -330,16 +294,16 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
                         tools_logger.debug(f"RESPONSE: {truncated}")
                     else:
                         tools_logger.debug(f"RESPONSE: {result_str}")
-                    tools_logger.debug("="*80 + "\n")
+                    tools_logger.debug("=" * 80 + "\n")
 
                 return result_str
             except Exception as e:
-                error_msg = f"Error executing tool {tool_name}: {str(e)}"
+                error_msg = f"Error executing tool {tool_name}: {e!s}"
 
                 # Log error
                 if config.DEBUG_TOOLS:
                     tools_logger.error(f"ERROR: {error_msg}")
-                    tools_logger.debug("="*80 + "\n")
+                    tools_logger.debug("=" * 80 + "\n")
 
                 return error_msg
 
@@ -348,7 +312,7 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> str:
     # Log error
     if config.DEBUG_TOOLS:
         tools_logger.error(f"ERROR: {not_found_msg}")
-        tools_logger.debug("="*80 + "\n")
+        tools_logger.debug("=" * 80 + "\n")
 
     return not_found_msg
 
@@ -383,7 +347,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                 content = message.get("content", "")
 
                 # Stream the content in small chunks while preserving formatting
-                tokens = re.split(r'(\s+)', content)
+                tokens = re.split(r"(\s+)", content)
 
                 for token in tokens:
                     if token:  # Skip empty strings
@@ -392,11 +356,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": config.IVAN_MODEL_NAME,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": token},
-                                "finish_reason": None
-                            }]
+                            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -406,22 +366,14 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": config.IVAN_MODEL_NAME,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop"
-                    }]
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
                 yield f"data: {json.dumps(final_chunk)}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
             # Add assistant message with tool calls to conversation
-            full_messages.append({
-                "role": "assistant",
-                "content": message.get("content", ""),
-                "tool_calls": tool_calls
-            })
+            full_messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": tool_calls})
 
             # Execute tools and add results
             for tool_call in tool_calls:
@@ -433,10 +385,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                 tool_result = execute_tool(tool_name, tool_args)
 
                 # Add tool result to messages
-                full_messages.append({
-                    "role": "tool",
-                    "content": tool_result
-                })
+                full_messages.append({"role": "tool", "content": tool_result})
 
         # Handle Ollama response format
         elif config.BACKEND_TYPE == "ollama":
@@ -450,7 +399,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                 # Stream the content in small chunks while preserving formatting
                 # Split by words but keep newlines and formatting
                 # Split on whitespace but keep the whitespace (including newlines)
-                tokens = re.split(r'(\s+)', content)
+                tokens = re.split(r"(\s+)", content)
 
                 for token in tokens:
                     if token:  # Skip empty strings
@@ -459,11 +408,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": config.IVAN_MODEL_NAME,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": token},
-                                "finish_reason": None
-                            }]
+                            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -473,11 +418,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": config.IVAN_MODEL_NAME,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop"
-                    }]
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
                 yield f"data: {json.dumps(final_chunk)}\n\n"
                 yield "data: [DONE]\n\n"
@@ -496,10 +437,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                 tool_result = execute_tool(tool_name, tool_args)
 
                 # Add tool result to messages
-                full_messages.append({
-                    "role": "tool",
-                    "content": tool_result
-                })
+                full_messages.append({"role": "tool", "content": tool_result})
 
         else:  # LM Studio (OpenAI format)
             choice = response_data.get("choices", [{}])[0]
@@ -513,7 +451,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                 # Stream the content in small chunks while preserving formatting
                 # Split by words but keep newlines and formatting
                 # Split on whitespace but keep the whitespace (including newlines)
-                tokens = re.split(r'(\s+)', content)
+                tokens = re.split(r"(\s+)", content)
 
                 for token in tokens:
                     if token:  # Skip empty strings
@@ -522,11 +460,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": config.IVAN_MODEL_NAME,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": token},
-                                "finish_reason": None
-                            }]
+                            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
 
@@ -536,11 +470,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": config.IVAN_MODEL_NAME,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop"
-                    }]
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
                 yield f"data: {json.dumps(final_chunk)}\n\n"
                 yield "data: [DONE]\n\n"
@@ -559,11 +489,7 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
                 tool_result = execute_tool(tool_name, tool_args)
 
                 # Add tool result to messages
-                full_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "content": tool_result
-                })
+                full_messages.append({"role": "tool", "tool_call_id": tool_call.get("id"), "content": tool_result})
 
     # Max iterations reached
     error_chunk = {
@@ -571,11 +497,13 @@ def stream_chat_response(messages: list, temperature: float, max_iterations: int
         "object": "chat.completion.chunk",
         "created": int(time.time()),
         "model": config.IVAN_MODEL_NAME,
-        "choices": [{
-            "index": 0,
-            "delta": {"content": "I apologize, but I've reached the maximum number of tool calling iterations."},
-            "finish_reason": "length"
-        }]
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": "I apologize, but I've reached the maximum number of tool calling iterations."},
+                "finish_reason": "length",
+            }
+        ],
     }
     yield f"data: {json.dumps(error_chunk)}\n\n"
     yield "data: [DONE]\n\n"
@@ -613,27 +541,18 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
                     "object": "chat.completion",
                     "created": int(time.time()),
                     "model": config.IVAN_MODEL_NAME,
-                    "choices": [{
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": message.get("content", "")
-                        },
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0
-                    }
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": message.get("content", "")},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                 }
 
             # Add assistant message with tool calls
-            full_messages.append({
-                "role": "assistant",
-                "content": message.get("content", ""),
-                "tool_calls": tool_calls
-            })
+            full_messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": tool_calls})
 
             # Execute tools and add results
             for tool_call in tool_calls:
@@ -645,10 +564,7 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
                 tool_result = execute_tool(tool_name, tool_args)
 
                 # Add tool result to messages
-                full_messages.append({
-                    "role": "tool",
-                    "content": tool_result
-                })
+                full_messages.append({"role": "tool", "content": tool_result})
 
         # Handle Ollama response format
         elif config.BACKEND_TYPE == "ollama":
@@ -662,19 +578,14 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
                     "object": "chat.completion",
                     "created": int(time.time()),
                     "model": config.IVAN_MODEL_NAME,
-                    "choices": [{
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": message.get("content", "")
-                        },
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0
-                    }
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": message.get("content", "")},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                 }
 
             # Add assistant message with tool calls
@@ -690,10 +601,7 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
                 tool_result = execute_tool(tool_name, tool_args)
 
                 # Add tool result to messages
-                full_messages.append({
-                    "role": "tool",
-                    "content": tool_result
-                })
+                full_messages.append({"role": "tool", "content": tool_result})
 
         else:  # LM Studio (OpenAI format)
             choice = response_data.get("choices", [{}])[0]
@@ -717,11 +625,7 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
                 tool_result = execute_tool(tool_name, tool_args)
 
                 # Add tool result to messages
-                full_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "content": tool_result
-                })
+                full_messages.append({"role": "tool", "tool_call_id": tool_call.get("id"), "content": tool_result})
 
     # Max iterations reached
     return {
@@ -729,37 +633,39 @@ def process_chat_completion(messages: list, temperature: float, stream: bool, ma
         "object": "chat.completion",
         "created": int(time.time()),
         "model": config.IVAN_MODEL_NAME,
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": "I apologize, but I've reached the maximum number of tool calling iterations."
-            },
-            "finish_reason": "length"
-        }],
-        "usage": {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        }
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "I apologize, but I've reached the maximum number of tool calling iterations.",
+                },
+                "finish_reason": "length",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
 
 
 @app.route("/v1/models", methods=["GET"])
 def list_models():
     """List available models."""
-    return jsonify({
-        "object": "list",
-        "data": [{
-            "id": config.IVAN_MODEL_NAME,
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": "ivan",
-            "permission": [],
-            "root": config.IVAN_MODEL_NAME,
-            "parent": None
-        }]
-    })
+    return jsonify(
+        {
+            "object": "list",
+            "data": [
+                {
+                    "id": config.IVAN_MODEL_NAME,
+                    "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": "ivan",
+                    "permission": [],
+                    "root": config.IVAN_MODEL_NAME,
+                    "parent": None,
+                }
+            ],
+        }
+    )
 
 
 @app.route("/v1/chat/completions", methods=["POST"])
@@ -780,10 +686,7 @@ def chat_completions():
             return Response(
                 stream_with_context(stream_chat_response(messages, temperature)),
                 mimetype="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no"
-                }
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
         else:
             # Process the chat completion (non-streaming)
@@ -802,17 +705,14 @@ def chat_completions():
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint."""
-    return jsonify({
-        "status": "healthy",
-        "backend": config.BACKEND_TYPE,
-        "model": config.IVAN_MODEL_NAME
-    })
+    return jsonify({"status": "healthy", "backend": config.BACKEND_TYPE, "model": config.IVAN_MODEL_NAME})
 
 
 @app.route("/index/status", methods=["GET"])
 def index_status():
     """Get status of the web documentation index."""
     from web_index_manager import get_status
+
     status = get_status()
     return jsonify(status)
 
@@ -820,6 +720,7 @@ def index_status():
 def is_port_available(port: int) -> bool:
     """Check if a port is available for binding."""
     import socket
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", port))
@@ -865,28 +766,27 @@ def start_webui(port: int):
 
         # Set custom prompt suggestions for SE workflows
         # Note: title must be an array of strings per Open Web UI docs
-        suggestions = json.dumps([
-            {
-                "title": ["Draft follow-up", "after client meeting"],
-                "content": "Help me draft a follow-up email after today's client meeting"
-            },
-            {
-                "title": ["Weekly SE update", "status report"],
-                "content": "Help me complete my weekly SE status update for this week"
-            },
-            {
-                "title": ["WARMER assessment", "account evaluation"],
-                "content": "Guide me through completing a WARMER assessment for my account"
-            }
-        ])
+        suggestions = json.dumps(
+            [
+                {
+                    "title": ["Draft follow-up", "after client meeting"],
+                    "content": "Help me draft a follow-up email after today's client meeting",
+                },
+                {
+                    "title": ["Weekly SE update", "status report"],
+                    "content": "Help me complete my weekly SE status update for this week",
+                },
+                {
+                    "title": ["WARMER assessment", "account evaluation"],
+                    "content": "Guide me through completing a WARMER assessment for my account",
+                },
+            ]
+        )
         env["DEFAULT_PROMPT_SUGGESTIONS"] = suggestions
 
         # Start open-webui
         _webui_process = subprocess.Popen(
-            [openwebui_cmd, "serve", "--port", str(webui_port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env
+            [openwebui_cmd, "serve", "--port", str(webui_port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
         )
 
         print(f"Open Web UI started at http://localhost:{webui_port}")
@@ -907,7 +807,9 @@ def signal_handler(sig, frame):
 
 @click.command()
 @click.option("--port", default=config.DEFAULT_PORT, help="Port to run Ivan on")
-@click.option("--backend", type=click.Choice(["ollama", "lmstudio", "gemini"]), default=config.BACKEND_TYPE, help="Backend to use")
+@click.option(
+    "--backend", type=click.Choice(["ollama", "lmstudio", "gemini"]), default=config.BACKEND_TYPE, help="Backend to use"
+)
 @click.option("--model", default=config.BACKEND_MODEL, help="Model name to use with backend")
 @click.option("--no-webui", is_flag=True, help="Don't start Open Web UI")
 @click.option("--rebuild-index", is_flag=True, help="Force rebuild of HashiCorp documentation index")
@@ -923,7 +825,8 @@ def main(port: int, backend: str, model: str, no_webui: bool, rebuild_index: boo
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    print(f"""
+    print(
+        f"""
 ╭────────────────────────────────────╮
 │  Ivan - AI Assistant with Tools   │
 ╰────────────────────────────────────╯
@@ -932,13 +835,15 @@ Backend: {backend}
 Model: {model}
 Port: {port}
 API: http://localhost:{port}/v1
-""")
+"""
+    )
 
     # Handle force-scrape flag
     if force_scrape:
         pages_dir = Path("./hashicorp_web_docs/pages")
         if pages_dir.exists():
             import shutil
+
             print("\n🗑️  Clearing page cache for complete re-scrape...")
             try:
                 shutil.rmtree(pages_dir)

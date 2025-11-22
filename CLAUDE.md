@@ -211,6 +211,60 @@ cd ivan-extension
 # 4. Select ivan-extension/ directory
 ```
 
+## Code Quality & Linting
+
+### Linting Routine
+
+Ivan uses modern Python linting tools for consistent code quality:
+- **Black**: Code formatter (120 character lines)
+- **Ruff**: Fast linter (replaces flake8, pylint, isort)
+- **MyPy**: Optional type checking
+
+#### Quick Start
+
+```bash
+# Before every commit
+./lint.sh
+
+# Manual linting
+black .                   # Format code
+ruff check --fix .       # Lint with auto-fix
+```
+
+#### Standard Workflow
+
+Always run before committing:
+
+```bash
+./lint.sh
+```
+
+This script:
+1. Formats code with Black (120 char lines)
+2. Lints with Ruff (auto-fixes most issues)
+3. Verifies all checks pass
+
+#### Configuration
+
+All linting settings are in `pyproject.toml`:
+- Line length: 120 characters max
+- Python 3.12 target
+- Print statements allowed in main files
+- Auto-sorted imports (stdlib → third-party → local)
+
+#### Common Linting Issues
+
+**Unused imports** - Ruff removes automatically
+**Quote styles** - Black standardizes to double quotes
+**Import sorting** - Ruff organizes automatically
+
+#### Installing Linting Tools
+
+```bash
+source venv/bin/activate
+pip install black ruff mypy
+```
+
 ## Common Tasks
 
 ### Adding New Tools

@@ -13,10 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -128,14 +125,10 @@ def run_test_case(test_case, search_func):
 
     try:
         # Search
-        print(f"\nSearching...")
-        results = search_func(
-            test_case['query'],
-            top_k=5,
-            product=test_case.get('product')
-        )
+        print("\nSearching...")
+        results = search_func(test_case["query"], top_k=5, product=test_case.get("product"))
 
-        print(f"\nResults Preview (first 500 chars):")
+        print("\nResults Preview (first 500 chars):")
         print("-" * 80)
         print(results[:500] + "..." if len(results) > 500 else results)
         print("-" * 80)
@@ -143,7 +136,7 @@ def run_test_case(test_case, search_func):
         # Validate
         passed, score, max_score, details = validate_test_case(test_case, results)
 
-        print(f"\nValidation:")
+        print("\nValidation:")
         for detail in details:
             print(detail)
         print(f"\n   Score: {score}/{max_score} ({score/max_score*100:.1f}%)")
@@ -154,20 +147,22 @@ def run_test_case(test_case, search_func):
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
 
 def main():
     """Run all search quality tests."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("HASHICORP SEARCH QUALITY - REGRESSION TEST SUITE")
-    print("="*80)
+    print("=" * 80)
     print(f"\nRunning {len(TEST_CASES)} test cases...")
 
     # Initialize search (using web crawler)
     try:
         from hashicorp_doc_search import search_docs
+
         print("\nUsing doc crawler search (hashicorp_doc_search)...")
         search_func = search_docs
     except Exception as e:
@@ -178,7 +173,7 @@ def main():
     results = {}
     for test_case in TEST_CASES:
         passed = run_test_case(test_case, search_func)
-        results[test_case['name']] = passed
+        results[test_case["name"]] = passed
 
     # Summary
     print(f"\n{'='*80}")
@@ -193,7 +188,7 @@ def main():
     total_count = len(results)
 
     print(f"\nOverall: {passed_count}/{total_count} tests passed")
-    print("="*80)
+    print("=" * 80)
 
     # Return 0 if all passed, 1 otherwise
     return 0 if passed_count == total_count else 1

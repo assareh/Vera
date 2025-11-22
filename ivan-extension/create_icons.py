@@ -3,18 +3,16 @@
 
 from PIL import Image, ImageDraw, ImageFont
 
+
 def create_icon(size):
     """Create a simple icon with 'V' letter."""
     # Create a new image with a gradient background
-    image = Image.new('RGB', (size, size), '#764ba2')
+    image = Image.new("RGB", (size, size), "#764ba2")
     draw = ImageDraw.Draw(image)
 
     # Draw a circle background
     padding = size // 8
-    draw.ellipse(
-        [padding, padding, size - padding, size - padding],
-        fill='#667eea'
-    )
+    draw.ellipse([padding, padding, size - padding, size - padding], fill="#667eea")
 
     # Try to use a font, fall back to default if not available
     try:
@@ -32,15 +30,16 @@ def create_icon(size):
     x = (size - text_width) // 2 - bbox[0]
     y = (size - text_height) // 2 - bbox[1]
 
-    draw.text((x, y), text, fill='white', font=font)
+    draw.text((x, y), text, fill="white", font=font)
 
     return image
+
 
 # Create icons in different sizes
 sizes = [16, 48, 128]
 for size in sizes:
     icon = create_icon(size)
-    icon.save(f'icon{size}.png')
-    print(f'Created icon{size}.png')
+    icon.save(f"icon{size}.png")
+    print(f"Created icon{size}.png")
 
-print('All icons created successfully!')
+print("All icons created successfully!")
