@@ -50,3 +50,9 @@ Thumbs.db
 
 # Cache directories
 hashicorp_web_docs/
+
+# Open Web UI runtime data
+webui.db
+chroma.sqlite
+*.db
+*.sqlite
