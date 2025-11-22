@@ -18,31 +18,47 @@ NC='\033[0m' # No Color
 echo "🎨 Applying HashiCorp branding to Open Web UI..."
 echo ""
 
-# Find Open Web UI installation
+# Find Open Web UI installation (check .venv first for uv, then venv for pip)
 OPENWEBUI_STATIC=""
-if [ -d "$SCRIPT_DIR/venv/lib/python3.12/site-packages/open_webui/static" ]; then
-    OPENWEBUI_STATIC="$SCRIPT_DIR/venv/lib/python3.12/site-packages/open_webui/static"
-elif [ -d "$SCRIPT_DIR/venv/lib/python3.11/site-packages/open_webui/static" ]; then
-    OPENWEBUI_STATIC="$SCRIPT_DIR/venv/lib/python3.11/site-packages/open_webui/static"
-else
-    # Try to find it dynamically
-    OPENWEBUI_STATIC=$(find "$SCRIPT_DIR/venv/lib" -type d -path "*/open_webui/static" 2>/dev/null | head -1)
-fi
+for VENV_DIR in ".venv" "venv"; do
+    if [ -d "$SCRIPT_DIR/$VENV_DIR/lib/python3.12/site-packages/open_webui/static" ]; then
+        OPENWEBUI_STATIC="$SCRIPT_DIR/$VENV_DIR/lib/python3.12/site-packages/open_webui/static"
+        break
+    elif [ -d "$SCRIPT_DIR/$VENV_DIR/lib/python3.11/site-packages/open_webui/static" ]; then
+        OPENWEBUI_STATIC="$SCRIPT_DIR/$VENV_DIR/lib/python3.11/site-packages/open_webui/static"
+        break
+    else
+        # Try to find it dynamically
+        FOUND=$(find "$SCRIPT_DIR/$VENV_DIR/lib" -type d -path "*/open_webui/static" 2>/dev/null | head -1)
+        if [ -n "$FOUND" ]; then
+            OPENWEBUI_STATIC="$FOUND"
+            break
+        fi
+    fi
+done
 
 OPENWEBUI_FRONTEND_STATIC=""
-if [ -d "$SCRIPT_DIR/venv/lib/python3.12/site-packages/open_webui/frontend/static" ]; then
-    OPENWEBUI_FRONTEND_STATIC="$SCRIPT_DIR/venv/lib/python3.12/site-packages/open_webui/frontend/static"
-elif [ -d "$SCRIPT_DIR/venv/lib/python3.11/site-packages/open_webui/frontend/static" ]; then
-    OPENWEBUI_FRONTEND_STATIC="$SCRIPT_DIR/venv/lib/python3.11/site-packages/open_webui/frontend/static"
-else
-    # Try to find it dynamically
-    OPENWEBUI_FRONTEND_STATIC=$(find "$SCRIPT_DIR/venv/lib" -type d -path "*/open_webui/frontend/static" 2>/dev/null | head -1)
-fi
+for VENV_DIR in ".venv" "venv"; do
+    if [ -d "$SCRIPT_DIR/$VENV_DIR/lib/python3.12/site-packages/open_webui/frontend/static" ]; then
+        OPENWEBUI_FRONTEND_STATIC="$SCRIPT_DIR/$VENV_DIR/lib/python3.12/site-packages/open_webui/frontend/static"
+        break
+    elif [ -d "$SCRIPT_DIR/$VENV_DIR/lib/python3.11/site-packages/open_webui/frontend/static" ]; then
+        OPENWEBUI_FRONTEND_STATIC="$SCRIPT_DIR/$VENV_DIR/lib/python3.11/site-packages/open_webui/frontend/static"
+        break
+    else
+        # Try to find it dynamically
+        FOUND=$(find "$SCRIPT_DIR/$VENV_DIR/lib" -type d -path "*/open_webui/frontend/static" 2>/dev/null | head -1)
+        if [ -n "$FOUND" ]; then
+            OPENWEBUI_FRONTEND_STATIC="$FOUND"
+            break
+        fi
+    fi
+done
 
 # Check if Open Web UI is installed
 if [ -z "$OPENWEBUI_STATIC" ] || [ ! -d "$OPENWEBUI_STATIC" ]; then
-    echo -e "${RED}✗ Error: Open Web UI not found in venv${NC}"
-    echo "  Please install it first with: pip install open-webui"
+    echo -e "${RED}✗ Error: Open Web UI not found${NC}"
+    echo "  Please install it first with: uv sync --extra webui"
     exit 1
 fi
 
