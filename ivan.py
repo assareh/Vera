@@ -738,19 +738,58 @@ def find_available_port(starting_port: int, max_attempts: int = 10) -> int:
     raise RuntimeError(f"Could not find available port starting from {starting_port}")
 
 
+def wait_for_webui_ready(webui_port: int, timeout: int = 30) -> bool:
+    """Wait for Open Web UI to be ready to accept requests.
+
+    Args:
+        webui_port: Port where Open Web UI is running
+        timeout: Maximum seconds to wait (default: 30)
+
+    Returns:
+        True if Open Web UI is ready, False if timeout
+    """
+    print("Waiting for Open Web UI to be ready", end="", flush=True)
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        try:
+            # Try to connect to Open Web UI health endpoint
+            response = requests.get(f"http://localhost:{webui_port}/health", timeout=1)
+            if response.status_code == 200:
+                print()  # New line after dots
+                return True
+        except (requests.ConnectionError, requests.Timeout):
+            # Not ready yet, keep waiting
+            pass
+
+        # Print progress dots
+        print(".", end="", flush=True)
+        time.sleep(0.5)
+
+    print()  # New line after dots
+    return False
+
+
 def start_webui(port: int):
     """Start Open Web UI as a subprocess."""
     global _webui_process
 
     try:
-        # Find open-webui executable (prefer venv, fallback to system)
-        venv_openwebui = Path(__file__).parent / "venv" / "bin" / "open-webui"
-        if venv_openwebui.exists():
+        # Find open-webui executable (check .venv first for uv, then venv for pip, fallback to system)
+        parent_dir = Path(__file__).parent
+        venv_openwebui = None
+        for venv_name in [".venv", "venv"]:
+            candidate = parent_dir / venv_name / "bin" / "open-webui"
+            if candidate.exists():
+                venv_openwebui = candidate
+                break
+
+        if venv_openwebui:
             openwebui_cmd = str(venv_openwebui)
         else:
             result = subprocess.run(["which", "open-webui"], capture_output=True, text=True)
             if result.returncode != 0:
-                print("Warning: open-webui not found. Install with: pip install open-webui")
+                print("Warning: open-webui not found. Install with: uv sync --extra webui")
                 return
             openwebui_cmd = "open-webui"
 
@@ -789,8 +828,14 @@ def start_webui(port: int):
             [openwebui_cmd, "serve", "--port", str(webui_port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
         )
 
-        print(f"Open Web UI started at http://localhost:{webui_port}")
-        print(f"Ivan endpoint auto-configured at http://localhost:{port}/v1")
+        # Wait for Open Web UI to be ready
+        if wait_for_webui_ready(webui_port):
+            print(f"✓ Open Web UI ready at http://localhost:{webui_port}")
+            print(f"  Ivan endpoint auto-configured at http://localhost:{port}/v1")
+        else:
+            print(f"⚠ Open Web UI started but may not be ready yet at http://localhost:{webui_port}")
+            print(f"  Please wait a moment and try again if the page doesn't load")
+            print(f"  Ivan endpoint: http://localhost:{port}/v1")
 
     except Exception as e:
         print(f"Failed to start Open Web UI: {e}")
