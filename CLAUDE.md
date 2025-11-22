@@ -163,41 +163,35 @@ The `setup.sh` script automatically creates `config.py` from `config.py.example`
 ## Development Setup
 
 ### Python Version Requirements
-- **Core functionality**: Python 3.8+
 - **With Open Web UI**: Python 3.11-3.12 (not compatible with 3.14+)
-- **Current setup**: Python 3.12.0 (via pyenv, see .python-version)
+- **Current setup**: Python 3.12.0 (managed by uv)
 
 ### Quick Start
 
-**First-time setup (or after Python version updates):**
+**First-time setup:**
 ```bash
-# Run setup script to create venv with correct Python version
-# This automatically installs all dependencies and applies HashiCorp branding
+# Run setup script (installs uv, Python, and dependencies)
 ./setup.sh
-
-# Activate virtual environment
-source venv/bin/activate
+# OR manually:
+uv sync --extra webui
 ```
 
-**Subsequent runs:**
+**Running Ivan:**
 ```bash
-# Just activate the virtual environment
-source venv/bin/activate
-
-# Run Ivan
-python ivan.py                           # Default: LM Studio, port 8000, with Web UI
-python ivan.py --backend ollama          # Use Ollama backend
-python ivan.py --no-webui                # Skip Web UI
-python ivan.py --port 8080               # Custom port
-python ivan.py --debug                   # Debug mode
+# No activation needed - uv handles environment automatically
+uv run python ivan.py                    # Default: LM Studio, port 8000, with Web UI
+uv run python ivan.py --backend ollama   # Use Ollama backend
+uv run python ivan.py --no-webui         # Skip Web UI
+uv run python ivan.py --port 8080        # Custom port
+uv run python ivan.py --debug            # Debug mode
 ```
 
 **What setup.sh does:**
-- Ensures Python 3.12.0 is used via pyenv
-- Creates virtual environment with correct Python version
+- Installs uv (if not already installed)
+- Installs Python 3.12.0 automatically
 - Installs all dependencies including Open Web UI
+- Creates config.py from template
 - Applies HashiCorp branding automatically
-- If you manually upgrade Open Web UI later, reapply branding with `./apply_branding.sh`
 
 ### Extension Development
 
@@ -227,8 +221,8 @@ Ivan uses modern Python linting tools for consistent code quality:
 ./lint.sh
 
 # Manual linting
-black .                   # Format code
-ruff check --fix .       # Lint with auto-fix
+uv run black .            # Format code
+uv run ruff check --fix . # Lint with auto-fix
 ```
 
 #### Standard Workflow
@@ -260,9 +254,10 @@ All linting settings are in `pyproject.toml`:
 
 #### Installing Linting Tools
 
+Linting tools are automatically installed with dev dependencies:
+
 ```bash
-source venv/bin/activate
-pip install black ruff mypy
+uv sync --extra dev
 ```
 
 ## Common Tasks

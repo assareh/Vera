@@ -1,5 +1,50 @@
 # Ivan - HashiCorp Documentation Assistant
-# Linting and code quality configuration
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ivan"
+version = "0.1.0"
+description = "HashiCorp documentation assistant with semantic search"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Ivan Contributors"}
+]
+keywords = ["hashicorp", "documentation", "assistant", "llm", "chatbot", "semantic-search"]
+
+dependencies = [
+    "flask>=3.0.0",
+    "flask-cors>=4.0.0",
+    "langchain>=0.3.27",
+    "langchain-community>=0.0.13",
+    "langchain-huggingface>=0.3.1",
+    "langchain-text-splitters>=0.3.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.1.7",
+    "duckduckgo-search>=4.4.3",
+    "ollama>=0.6.0",
+    "google-genai>=0.2.0",
+    "sentence-transformers>=2.3.0",
+    "faiss-cpu>=1.8.0",
+    "tiktoken>=0.5.0",
+    "rank-bm25>=0.2.2",
+    "beautifulsoup4>=4.12.3",
+    "llm-api-server @ git+https://github.com/assareh/llm-api-server.git",
+]
+
+[project.optional-dependencies]
+webui = ["open-webui>=0.1.0"]
+dev = ["pytest", "black", "ruff", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/assareh/ivan"
+Repository = "https://github.com/assareh/ivan"
+Issues = "https://github.com/assareh/ivan/issues"
 
 [tool.black]
 line-length = 120

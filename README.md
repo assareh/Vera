@@ -91,67 +91,75 @@ Ivan includes a Chrome extension for automating SE Weekly Updates and WARMER wit
 
 ### Installation
 
-**Prerequisites:**
-- [pyenv](https://github.com/pyenv/pyenv) (for Python version management)
-  - macOS: `brew install pyenv`
-  - Linux: `curl https://pyenv.run | bash`
+#### Using uv (recommended - fastest and simplest)
 
-**Setup:**
 ```bash
-# Clone or navigate to the project directory
+# Clone the repository
+git clone https://github.com/assareh/ivan.git
 cd Ivan
 
-# Run the setup script (handles everything)
+# Run the setup script (installs uv, Python, and dependencies)
 ./setup.sh
-
-# Activate the virtual environment
-source venv/bin/activate
 ```
 
 **What the setup script does:**
-- Verifies/installs Python 3.12.0 via pyenv
-- Creates a virtual environment with the correct Python version
+- Installs uv (if not already installed)
+- Installs Python 3.12.0
 - Installs all dependencies including Open Web UI
-- Applies HashiCorp branding automatically
-- Ensures compatibility across different systems
+- Creates config.py from template
+- Applies HashiCorp branding
+
+#### Manual installation with uv
+
+```bash
+# Install uv if needed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and setup
+git clone https://github.com/assareh/ivan.git
+cd Ivan
+uv sync --extra webui
+cp config.py.example config.py
+./apply_branding.sh
+```
 
 ### Running Ivan
 
 **Basic usage (default: LM Studio):**
 ```bash
-python ivan.py
+uv run python ivan.py
 # Uses LM Studio backend by default with model: openai/gpt-oss-20b
 ```
 
 **With Ollama:**
 ```bash
-python ivan.py --backend ollama --model openai/gpt-oss-20b
+uv run python ivan.py --backend ollama --model openai/gpt-oss-20b
 # Or set via environment variable: export IVAN_BACKEND=ollama
 ```
 
 **With LM Studio (custom model):**
 ```bash
-python ivan.py --backend lmstudio --model your-model-name
+uv run python ivan.py --backend lmstudio --model your-model-name
 ```
 
 **Without Web UI:**
 ```bash
-python ivan.py --no-webui
+uv run python ivan.py --no-webui
 ```
 
 **Custom port:**
 ```bash
-python ivan.py --port 8080
+uv run python ivan.py --port 8080
 ```
 
 **Force rebuild documentation index:**
 ```bash
-python ivan.py --rebuild-index
+uv run python ivan.py --rebuild-index
 ```
 
 **Force complete re-scrape (re-downloads all pages):**
 ```bash
-python ivan.py --force-scrape
+uv run python ivan.py --force-scrape
 ```
 
 ### First Run: Automatic Index Building
