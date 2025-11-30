@@ -168,6 +168,34 @@
         "Enable the secrets engine at a dedicated path for each team using the -path parameter",
         "Deploy a second Vault cluster, one for each team"
       ]
+    },
+    {
+      "id": "q15",
+      "type": "multiple_choice",
+      "question": "Using the Vault CLI, what command is used to authenticate to Vault?",
+      "options": [
+        "vault auth",
+        "vault login",
+        "vault user",
+        "vault creds"
+      ],
+      "correct_answer": "vault login"
+    },
+    {
+      "id": "q16",
+      "type": "multiple_answer",
+      "question": "Vault operators can create two types of groups in Vault. What are the two types? (Select 2)",
+      "options": [
+        "user groups",
+        "external groups",
+        "policy groups",
+        "internal groups",
+        "security groups"
+      ],
+      "correct_answers": [
+        "external groups",
+        "internal groups"
+      ]
     }
   ],
   "consul_associate_003": [
@@ -309,6 +337,108 @@
         "Terraform makes any infrastructure changes defined in configuration",
         "Terraform updates the state file with configuration changes it made"
       ]
+    },
+    {
+      "id": "q6",
+      "type": "true_false",
+      "question": "Terraform can run on Windows or Linux, but it requires a Server version of the Windows operating system.",
+      "options": ["True", "False"],
+      "correct_answer": "False"
+    },
+    {
+      "id": "q7",
+      "type": "multiple_choice",
+      "question": "Which of the following is not a valid Terraform collection type?",
+      "options": [
+        "list",
+        "map",
+        "tree",
+        "set"
+      ],
+      "correct_answer": "tree"
+    },
+    {
+      "id": "q8",
+      "type": "multiple_choice",
+      "question": "Why would you use the terraform taint command?",
+      "options": [
+        "When you want to force Terraform to destroy a resource on the next apply",
+        "When you want to force Terraform to destroy and recreate a resource on the next apply",
+        "When you want Terraform to ignore a resource on the next apply",
+        "When you want Terraform to destroy all the infrastructure in your workspace"
+      ],
+      "correct_answer": "When you want to force Terraform to destroy and recreate a resource on the next apply"
+    },
+    {
+      "id": "q9",
+      "type": "multiple_choice",
+      "question": "Which provisioner invokes a process on the resource created by Terraform?",
+      "options": [
+        "remote-exec",
+        "null-exec",
+        "local-exec",
+        "file"
+      ],
+      "correct_answer": "remote-exec"
+    },
+    {
+      "id": "q10",
+      "type": "true_false",
+      "question": "Setting the TF_LOG environment variable to DEBUG causes debug messages to be logged into syslog.",
+      "options": ["True", "False"],
+      "correct_answer": "False"
+    },
+    {
+      "id": "q11",
+      "type": "true_false",
+      "question": "When running the command terraform taint against a managed resource you want to force recreation upon, Terraform will immediately destroy and recreate the resource.",
+      "options": ["True", "False"],
+      "correct_answer": "False"
+    },
+    {
+      "id": "q12",
+      "type": "true_false",
+      "question": "Terraform and Terraform providers must use the same major version number in a single configuration.",
+      "options": ["True", "False"],
+      "correct_answer": "False"
+    },
+    {
+      "id": "q13",
+      "type": "multiple_choice",
+      "question": "If writing Terraform code that adheres to the Terraform style conventions, how would you properly indent each nesting level compared to the one above it?",
+      "options": [
+        "With four spaces",
+        "With a tab",
+        "With three spaces",
+        "With two spaces"
+      ],
+      "correct_answer": "With two spaces"
+    },
+    {
+      "id": "q14",
+      "type": "true_false",
+      "question": "In Terraform 0.13 and above, outside of the required_providers block, Terraform configurations always refer to providers by their local names.",
+      "options": ["True", "False"],
+      "correct_answer": "True"
+    },
+    {
+      "id": "q15",
+      "type": "true_false",
+      "question": "Terraform requires the Go runtime as a prerequisite for installation.",
+      "options": ["True", "False"],
+      "correct_answer": "False"
+    },
+    {
+      "id": "q16",
+      "type": "multiple_choice",
+      "question": "Where does the Terraform local backend store its state?",
+      "options": [
+        "In the /tmp directory",
+        "In the terraform.tfvars file",
+        "In the terraform.tfstate file",
+        "In the user's .terraformrc file"
+      ],
+      "correct_answer": "In the terraform.tfstate file"
     }
   ]
 }

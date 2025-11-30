@@ -1,70 +1,34 @@
-"""Tool definitions for Ivan."""
+"""Tool definitions for Ivan - customer notes search and documentation search."""
 
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import ollama
-from duckduckgo_search import DDGS
-from langchain_core.tools import Tool
-from pydantic.v1 import BaseModel, Field
+from langchain_core.tools import tool
+from llm_api_server import BUILTIN_TOOLS, create_web_search_tool
 
-import config
+from config import config
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
-class CurrentDateInput(BaseModel):
-    """Input schema for current date tool."""
-
-    format: str = Field(
-        default="%Y-%m-%d", description="The date format string (strftime format). Default is YYYY-MM-DD"
-    )
+# =============================================================================
+# Customer Notes Tools
+# =============================================================================
 
 
-def get_current_date(format: str = "%Y-%m-%d") -> str:
-    """Get the current date and time.
-
-    Args:
-        format: The date format string (strftime format)
-
-    Returns:
-        The current date formatted as a string
-    """
-    return datetime.now().strftime(format)
-
-
-class CustomerNotesSearchInput(BaseModel):
-    """Input schema for customer notes search tool."""
-
-    customer_name: str = Field(
-        default="",
-        description="The customer/account name to search for (e.g., 'Adobe', 'Microsoft'). Leave empty to search all customers.",
-    )
-    content_query: str = Field(
-        default="", description="Search for specific content within meeting notes. Leave empty to just list notes."
-    )
-    limit: int = Field(default=10, description="Maximum number of results to return. Default is 10, max is 50.")
-    sort_by_date: bool = Field(default=True, description="Sort results by date (newest first). Default is True.")
-
-
-class ReadCustomerNoteInput(BaseModel):
-    """Input schema for reading a customer note file."""
-
-    file_path: str = Field(
-        description="The relative path to the note file within Customer_Notes directory (e.g., 'A/Adobe/10_Meetings/2025-01-15_Discovery_Call.md')"
-    )
-
-
+@tool
 def search_customer_notes(
-    customer_name: str = "", content_query: str = "", limit: int = 10, sort_by_date: bool = True
+    customer_name: str = "",
+    content_query: str = "",
+    limit: int = 10,
+    sort_by_date: bool = True,
 ) -> str:
     """Search through customer meeting notes.
 
-    This tool searches the hierarchical customer notes directory structure
+    Searches the hierarchical Customer_Notes directory structure
     (Customer_Notes/[A-Z,0-9]/[Customer]/10_Meetings/*.md) to find relevant
     meeting notes.
 
@@ -79,35 +43,20 @@ def search_customer_notes(
     """
     notes_path = Path(config.CUSTOMER_NOTES_DIR)
 
-    logger.info("[CUSTOMER_NOTES_SEARCH] Starting search")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Directory: {notes_path.absolute()}")
-    logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer (original): {customer_name or 'ALL'}")
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Customer: {customer_name or 'ALL'}")
     logger.info(f"[CUSTOMER_NOTES_SEARCH] Content query: {content_query or 'NONE'}")
 
-    # Normalize customer name: replace spaces with underscores and handle aliases
+    # Normalize customer name: replace spaces with underscores
     search_terms = []
     if customer_name:
-        # Convert to lowercase for comparison
         customer_lower = customer_name.lower().strip()
-
-        # Replace spaces with underscores (e.g., "Hewlett Packard" -> "hewlett_packard")
         normalized_name = customer_lower.replace(" ", "_")
         search_terms.append(normalized_name)
-
-        # Check if it's an alias and add the full name
-        if customer_lower in config.CUSTOMER_ALIASES:
-            full_name = config.CUSTOMER_ALIASES[customer_lower]
-            search_terms.append(full_name)
-            logger.info(f"[CUSTOMER_NOTES_SEARCH] Alias detected: '{customer_name}' -> '{full_name}'")
-
-        # Also add the original term with spaces replaced (for direct matches)
-        if normalized_name not in search_terms:
-            search_terms.append(normalized_name)
-
-        logger.info(f"[CUSTOMER_NOTES_SEARCH] Search terms: {search_terms}")
+        if normalized_name != customer_lower:
+            search_terms.append(customer_lower)
 
     if not notes_path.exists():
-        logger.warning(f"[CUSTOMER_NOTES_SEARCH] Directory does not exist: {notes_path.absolute()}")
         return (
             f"Customer notes directory '{config.CUSTOMER_NOTES_DIR}' does not exist.\n\n"
             f"To set up customer notes:\n"
@@ -115,77 +64,38 @@ def search_customer_notes(
             f"2. Or set CUSTOMER_NOTES_DIR environment variable to your notes path"
         )
 
-    # Limit results
     limit = min(max(1, limit), 50)
-
     results: list[dict[str, Any]] = []
 
-    # Search through the hierarchical structure
-    # Pattern: Customer_Notes/[Letter]/[Customer]/10_Meetings/*.md
-    logger.info("[CUSTOMER_NOTES_SEARCH] Scanning directory structure...")
     for letter_dir in notes_path.iterdir():
         if not letter_dir.is_dir():
-            logger.debug(f"[CUSTOMER_NOTES_SEARCH] Skipping non-directory: {letter_dir.name}")
             continue
-
-        logger.debug(f"[CUSTOMER_NOTES_SEARCH] Scanning letter directory: {letter_dir.name}")
 
         for customer_dir in letter_dir.iterdir():
             if not customer_dir.is_dir():
-                logger.debug(f"[CUSTOMER_NOTES_SEARCH] Skipping non-directory: {customer_dir.name}")
                 continue
 
-            logger.debug(f"[CUSTOMER_NOTES_SEARCH] Found customer directory: {customer_dir.name}")
-
-            # Filter by customer name if provided
             if search_terms:
-                # Check if any search term matches this customer directory
                 customer_dir_lower = customer_dir.name.lower()
-                matches = any(term in customer_dir_lower for term in search_terms)
-
-                if not matches:
-                    logger.debug(
-                        f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' doesn't match any search terms {search_terms}, skipping"
-                    )
+                if not any(term in customer_dir_lower for term in search_terms):
                     continue
-                else:
-                    logger.debug(f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}' matches search terms")
 
-            # Look for meetings directory (could be "10_Meetings" or similar)
             meetings_dirs = [d for d in customer_dir.iterdir() if d.is_dir() and "meeting" in d.name.lower()]
-            logger.info(
-                f"[CUSTOMER_NOTES_SEARCH] Customer '{customer_dir.name}': found {len(meetings_dirs)} meeting directories"
-            )
 
             for meetings_dir in meetings_dirs:
-                logger.debug(f"[CUSTOMER_NOTES_SEARCH] Scanning meeting directory: {meetings_dir.name}")
-
-                # Search through markdown files
-                md_files = list(meetings_dir.glob("*.md"))
-                logger.info(f"[CUSTOMER_NOTES_SEARCH] Found {len(md_files)} markdown files in {meetings_dir.name}")
-
-                for file_path in md_files:
-                    logger.debug(f"[CUSTOMER_NOTES_SEARCH] Reading file: {file_path.name}")
+                for file_path in meetings_dir.glob("*.md"):
                     try:
                         content = file_path.read_text(encoding="utf-8")
 
-                        # If content query is provided, check if it matches
                         if content_query and content_query.lower() not in content.lower():
-                            logger.debug(
-                                f"[CUSTOMER_NOTES_SEARCH] File '{file_path.name}' doesn't match content query, skipping"
-                            )
                             continue
 
-                        # Extract date from filename if possible (format: YYYY-MM-DD_...)
                         date_str = ""
                         date_match = re.search(r"(\d{4}-\d{2}-\d{2})", file_path.name)
                         if date_match:
                             date_str = date_match.group(1)
 
-                        # Get relative path from Customer_Notes
                         relative_path = file_path.relative_to(notes_path)
-
-                        # Get first few lines as preview
                         preview_lines = content.split("\n")[:5]
                         preview = "\n".join(line for line in preview_lines if line.strip())
 
@@ -198,36 +108,30 @@ def search_customer_notes(
                                 "preview": preview[:200] + "..." if len(preview) > 200 else preview,
                             }
                         )
-                        logger.info(f"[CUSTOMER_NOTES_SEARCH] Added result: {file_path.name} (date: {date_str})")
 
                     except Exception as e:
-                        logger.error(f"[CUSTOMER_NOTES_SEARCH] Error reading file {file_path}: {e}")
+                        logger.error(f"[CUSTOMER_NOTES_SEARCH] Error reading {file_path}: {e}")
                         continue
 
-    logger.info(f"[CUSTOMER_NOTES_SEARCH] Search complete. Found {len(results)} total results before sorting/limiting")
+    logger.info(f"[CUSTOMER_NOTES_SEARCH] Found {len(results)} results")
 
     if not results:
-        search_terms = []
+        search_terms_display = []
         if customer_name:
-            search_terms.append(f"customer '{customer_name}'")
+            search_terms_display.append(f"customer '{customer_name}'")
         if content_query:
-            search_terms.append(f"content '{content_query}'")
+            search_terms_display.append(f"content '{content_query}'")
 
-        if search_terms:
-            return f"No customer meeting notes found matching {' and '.join(search_terms)}."
+        if search_terms_display:
+            return f"No customer meeting notes found matching {' and '.join(search_terms_display)}."
         else:
             return "No customer meeting notes found in the directory."
 
-    # Sort by date if requested
     if sort_by_date:
         results.sort(key=lambda x: x["date"], reverse=True)
-        logger.debug("[CUSTOMER_NOTES_SEARCH] Results sorted by date")
 
-    # Limit results
     results = results[:limit]
-    logger.info(f"[CUSTOMER_NOTES_SEARCH] Returning {len(results)} results after limiting to {limit}")
 
-    # Format output
     output = [f"Found {len(results)} customer meeting note(s):\n"]
 
     for idx, result in enumerate(results, 1):
@@ -242,6 +146,7 @@ def search_customer_notes(
     return "\n".join(output)
 
 
+@tool
 def read_customer_note(file_path: str) -> str:
     """Read the full content of a customer meeting note.
 
@@ -262,7 +167,6 @@ def read_customer_note(file_path: str) -> str:
             f"2. Or set CUSTOMER_NOTES_DIR environment variable to your notes path"
         )
 
-    # Construct full path
     full_path = notes_path / file_path
 
     if not full_path.exists():
@@ -273,368 +177,201 @@ def read_customer_note(file_path: str) -> str:
 
     try:
         content = full_path.read_text(encoding="utf-8")
-        return f"📄 {file_path}\n\n{content}"
+        return f"--- {file_path} ---\n\n{content}"
     except Exception as e:
         return f"Error reading note file: {e!s}"
 
 
-class HashiCorpDocsSearchInput(BaseModel):
-    """Input schema for HashiCorp docs search tool."""
+# =============================================================================
+# Documentation Search Tool
+# =============================================================================
 
-    query: str = Field(
-        description="The search query for HashiCorp documentation (e.g., 'Terraform module syntax', 'Vault authentication methods', 'Consul service mesh')"
-    )
-    product: str = Field(
-        default="",
-        description="Optional: Specific HashiCorp product to search (e.g., 'terraform', 'vault', 'consul', 'nomad', 'packer', 'waypoint'). Leave empty to search all products.",
-    )
-    max_results: int = Field(default=5, description="Maximum number of results to return. Default is 5, max is 10.")
+_doc_index = None
+_doc_search_tool = None
 
 
-def search_hashicorp_docs(query: str, product: str = "", max_results: int = 5) -> str:
-    """Search HashiCorp product documentation with web search fallback.
+def initialize_rag_at_startup() -> None:
+    """Initialize RAG index at startup if enabled.
 
-    This tool searches developer.hashicorp.com including all product documentation,
-    validated designs, and technical guides. If local index confidence is low,
-    automatically falls back to live web search for better coverage.
-
-    ⚠️  CRITICAL: When citing HashiCorp resources:
-    - Use ONLY the URLs provided in the search results
-    - Do NOT generate, infer, or hallucinate URLs
-    - If a URL is not provided in the results, do not make one up
-
-    Args:
-        query: The search query
-        product: Optional specific product to search (terraform, vault, consul, etc.)
-        max_results: Maximum number of results (default 5, max 10)
-
-    Returns:
-        Formatted search results from HashiCorp developer documentation with actual URLs
+    This ensures the index is built before the first request,
+    avoiding delays for the first user. Creates a doc_search tool
+    that the model can use to search HashiCorp documentation.
     """
-    logger.info("[HASHICORP_SEARCH] Starting search")
-    logger.info(f"[HASHICORP_SEARCH] Query: {query}")
-    logger.info(f"[HASHICORP_SEARCH] Product: {product or 'ALL'}")
-
-    # Limit results
-    max_results = min(max(1, max_results), 10)
-
-    # Confidence threshold for web search fallback
-    CONFIDENCE_THRESHOLD = 6.0
-
-    # Search using the doc crawler
-    try:
-        from hashicorp_doc_search import get_doc_search_index
-
-        # Get raw results to check confidence scores
-        index = get_doc_search_index()
-        if index.vectorstore is None:
-            index.initialize()
-
-        raw_results = index.search(query, top_k=max_results, product_filter=product if product else None)
-
-        # Check if we need web search fallback
-        use_web_fallback = False
-        if not raw_results:
-            logger.info("[HASHICORP_SEARCH] No results from local index, falling back to web search")
-            use_web_fallback = True
-        elif raw_results[0]["score"] < CONFIDENCE_THRESHOLD:
-            logger.info(
-                f"[HASHICORP_SEARCH] Low confidence ({raw_results[0]['score']:.2f} < {CONFIDENCE_THRESHOLD}), falling back to web search"
-            )
-            use_web_fallback = True
-
-        # Format local results
-        local_output = []
-        if raw_results:
-            local_output.append(f"Found {len(raw_results)} result(s) in HashiCorp Developer Documentation:\n")
-            for idx, result in enumerate(raw_results, 1):
-                local_output.append(f"\n{idx}. [{result['product'].upper()}]")
-                local_output.append(f"   URL: {result['url']}")
-                local_output.append(f"   Relevance: {result['score']:.2f}")
-                text_preview = result["text"][:900]
-                if len(result["text"]) > 900:
-                    text_preview += "..."
-                local_output.append(f"   Content: {text_preview}")
-                local_output.append("")
-
-        # If confidence is high, return local results only
-        if not use_web_fallback:
-            results = "\n".join(local_output)
-            logger.info("[HASHICORP_SEARCH] High confidence results, returning local index only")
-            logger.debug("[HASHICORP_SEARCH] === TOOL RETURNING TO LLM ===")
-            logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {results[:500]}")
-            logger.debug("[HASHICORP_SEARCH] === END TOOL RETURN ===")
-            return results
-
-        # Add web search fallback
-        try:
-            logger.info("[HASHICORP_SEARCH] Fetching web search results...")
-            # Add site filter for HashiCorp docs
-            web_query = f"{query} site:developer.hashicorp.com"
-
-            # Try Ollama web search first (requires API key but more reliable)
-            try:
-                if config.OLLAMA_API_KEY:
-                    web_results = ollama_web_search(web_query, max_results=5)
-                else:
-                    logger.info("[HASHICORP_SEARCH] OLLAMA_API_KEY not set, falling back to DuckDuckGo")
-                    web_results = ddg_web_search(web_query, max_results=5)
-            except Exception as web_error:
-                logger.warning(f"[HASHICORP_SEARCH] Web search failed: {web_error}, trying DuckDuckGo")
-                try:
-                    web_results = ddg_web_search(web_query, max_results=5)
-                except Exception as ddg_error:
-                    logger.warning(f"[HASHICORP_SEARCH] DuckDuckGo also failed: {ddg_error}")
-                    web_results = []
-
-            if web_results:
-                logger.info(f"[HASHICORP_SEARCH] Found {len(web_results)} web results")
-
-                # Format combined results
-                output = []
-                if local_output:
-                    output.extend(local_output)
-                    output.append("\n" + "=" * 80)
-                    output.append("⚠️  Note: Local index confidence was low. Adding live web search results below:")
-                    output.append("=" * 80 + "\n")
-                else:
-                    output.append("No results in local index. Showing live web search results:\n")
-
-                for idx, result in enumerate(web_results, 1):
-                    output.append(f"\n{len(raw_results) + idx}. [WEB SEARCH]")
-                    output.append(f"   URL: {result['url']}")
-                    output.append(f"   Title: {result['title']}")
-                    output.append(f"   Content: {result['description'][:600]}")
-                    output.append("")
-
-                combined_results = "\n".join(output)
-                logger.debug("[HASHICORP_SEARCH] === TOOL RETURNING TO LLM (with web fallback) ===")
-                logger.debug(f"[HASHICORP_SEARCH] First 500 chars: {combined_results[:500]}")
-                logger.debug("[HASHICORP_SEARCH] === END TOOL RETURN ===")
-                return combined_results
-            else:
-                logger.warning("[HASHICORP_SEARCH] Web search returned no results")
-                if local_output:
-                    return "\n".join(local_output)
-                else:
-                    return f"No results found for: '{query}'"
-
-        except Exception as web_error:
-            logger.error(f"[HASHICORP_SEARCH] Web search failed: {web_error}")
-            # Fall back to local results if web search fails
-            if local_output:
-                return "\n".join(local_output)
-            else:
-                return f"Search completed but web fallback failed: {web_error!s}"
-
-    except Exception as e:
-        logger.error(f"[HASHICORP_SEARCH] Search failed: {e}")
-        return f"Error searching HashiCorp documentation: {e!s}"
-
-
-def ollama_web_search(query: str, max_results: int = 10) -> list[dict[str, str]]:
-    """Search the web using Ollama's search API.
-
-    Args:
-        query: The search query
-        max_results: Maximum number of results (not enforced by API, but used for consistency)
-
-    Returns:
-        List of search result dictionaries with 'title', 'url', and 'description' keys
-
-    Raises:
-        Exception: If API key is not configured or API call fails
-    """
-    if not config.OLLAMA_API_KEY:
-        raise ValueError("OLLAMA_API_KEY not configured")
-
-    logger.info(f"[OLLAMA_SEARCH] Searching with query: {query}")
+    if not config.RAG_ENABLED:
+        print("RAG disabled (set RAG_ENABLED=true to enable)")
+        return
 
     try:
-        # Create client with API key
-        client = ollama.Client(headers={"Authorization": f"Bearer {config.OLLAMA_API_KEY}"})
+        from llm_api_server.rag import DocSearchIndex, RAGConfig
 
-        # Use the official web_search method
-        response = client.web_search(query)
+        global _doc_index, _doc_search_tool
 
-        results = []
+        # Validate that RAG sources are configured
+        if not config.RAG_DOC_SOURCES or not config.RAG_DOC_SOURCES[0]:
+            print("\nWarning: RAG_ENABLED=true but RAG_DOC_SOURCES not configured")
+            print("  Set RAG_DOC_SOURCES in .env (comma-separated URLs)")
+            return
 
-        # Parse response: response is a dict with 'results' key containing list of results
-        if hasattr(response, "get"):
-            items = response.get("results", [])
-        elif hasattr(response, "results"):
-            items = response.results
+        print("")
+        print("=" * 60)
+        print("⏳ PLEASE WAIT: Loading indexes may take several minutes")
+        print("=" * 60)
+        print("")
+        print("Initializing HashiCorp documentation search index...")
+        print(f"  Sources: {', '.join(config.RAG_DOC_SOURCES)}")
+
+        # Combine any extra doc sources with explicit manual URLs
+        manual_urls = list(config.RAG_MANUAL_URLS)
+        if len(config.RAG_DOC_SOURCES) > 1:
+            manual_urls.extend(config.RAG_DOC_SOURCES[1:])
+
+        rag_config = RAGConfig(
+            base_url=config.RAG_DOC_SOURCES[0],
+            cache_dir=config.RAG_CACHE_DIR,
+            manual_urls=manual_urls,
+            manual_urls_only=False,
+            max_crawl_depth=config.RAG_MAX_CRAWL_DEPTH,
+            rate_limit_delay=config.RAG_RATE_LIMIT_DELAY,
+            max_workers=config.RAG_MAX_WORKERS,
+            max_pages=config.RAG_MAX_PAGES,
+            url_include_patterns=config.RAG_URL_INCLUDE_PATTERNS,
+            url_exclude_patterns=config.RAG_URL_EXCLUDE_PATTERNS,
+            hybrid_bm25_weight=config.RAG_BM25_WEIGHT,
+            hybrid_semantic_weight=config.RAG_SEMANTIC_WEIGHT,
+            search_top_k=config.RAG_TOP_K,
+            rerank_enabled=config.RAG_RERANK_ENABLED,
+            update_check_interval_hours=config.RAG_UPDATE_INTERVAL_HOURS,
+        )
+
+        _doc_index = DocSearchIndex(rag_config)
+
+        if _doc_index.needs_update():
+            print("Building RAG index (this may take several minutes)...")
+            _doc_index.crawl_and_index()
+            print("✓ RAG index built successfully")
         else:
-            # If response is already a list
-            items = response if isinstance(response, list) else []
+            print("Loading cached RAG index...")
+            _doc_index.load_index()
+            print("✓ RAG index loaded successfully")
 
-        # Limit to max_results
-        for item in items[:max_results]:
-            results.append(
-                {
-                    "title": item.get("title", "No title"),
-                    "url": item.get("url", ""),
-                    "description": item.get("content", "No description"),
-                }
-            )
+        # Track doc search calls per session (resets after 5 min of inactivity)
+        import time as _time
 
-        logger.info(f"[OLLAMA_SEARCH] Found {len(results)} results")
-        return results
+        _doc_search_state = {"call_count": 0, "last_call": 0}
+        _DOC_SEARCH_LIMIT = 2  # Allow 2 searches before forcing web_search
+        _SESSION_TIMEOUT = 300  # 5 minutes - reset counter after this
 
-    except Exception as e:
-        logger.error(f"[OLLAMA_SEARCH] Search failed: {e}")
-        import traceback
+        # Create a custom doc search tool with fallback reminder after 2nd search
+        @tool
+        def hashicorp_doc_search(query: str, top_k: int = 5) -> str:
+            """Search HashiCorp documentation for technical information about Terraform, Vault, Consul,
+            Nomad, Packer, Boundary, Waypoint, and other HashiCorp products. Returns relevant text
+            excerpts with source URLs. You can try up to 2 different searches, then use web_search.
 
-        logger.error(f"[OLLAMA_SEARCH] Traceback: {traceback.format_exc()}")
-        raise
+            Args:
+                query: The search query to find relevant documentation
+                top_k: Number of results to return (default 5)
 
+            Returns:
+                Relevant documentation excerpts with source URLs
+            """
+            nonlocal _doc_search_state
 
-def ddg_web_search(query: str, max_results: int = 10) -> list[dict[str, str]]:
-    """Search the web using DuckDuckGo (free, rate-limited).
+            # Reset counter if session timed out (new conversation)
+            current_time = _time.time()
+            if current_time - _doc_search_state["last_call"] > _SESSION_TIMEOUT:
+                _doc_search_state["call_count"] = 0
 
-    Args:
-        query: The search query
-        max_results: Maximum number of results
+            _doc_search_state["call_count"] += 1
+            _doc_search_state["last_call"] = current_time
+            call_count = _doc_search_state["call_count"]
 
-    Returns:
-        List of search result dictionaries with 'title', 'url', and 'description' keys
+            results = _doc_index.search(query, top_k=top_k)
 
-    Raises:
-        Exception: If search fails
-    """
-    logger.info(f"[DDG_SEARCH] Searching with query: {query}")
+            if not results:
+                if call_count >= _DOC_SEARCH_LIMIT:
+                    return (
+                        "No relevant documentation found.\n\n"
+                        "⚠️ STOP: You've searched documentation twice with no good results. "
+                        "Use web_search NOW to find the answer."
+                    )
+                return (
+                    "No relevant documentation found for this query.\n"
+                    f"You have {_DOC_SEARCH_LIMIT - call_count} doc search(es) remaining before you must use web_search."
+                )
 
-    try:
-        import warnings
+            # Format results - search() returns list of dicts with keys: text, url, heading_path, metadata, score
+            output_parts = []
+            for i, result in enumerate(results, 1):
+                source = result.get("url", "Unknown source")
+                content = result.get("text", "")
+                heading = result.get("heading_path", "")
+                if heading:
+                    output_parts.append(f"[{i}] Source: {source}\nSection: {heading}\n{content}")
+                else:
+                    output_parts.append(f"[{i}] Source: {source}\n{content}")
 
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*AsyncSession.*")
-            with DDGS() as ddgs:
-                raw_results = list(ddgs.text(query, max_results=max_results))
+            formatted_results = "\n\n---\n\n".join(output_parts)
 
-        results = []
-        for item in raw_results:
-            results.append(
-                {
-                    "title": item.get("title", "No title"),
-                    "url": item.get("href", ""),
-                    "description": item.get("body", "No description"),
-                }
-            )
-
-        logger.info(f"[DDG_SEARCH] Found {len(results)} results")
-        return results
-
-    except Exception as e:
-        logger.error(f"[DDG_SEARCH] Search failed: {e}")
-        raise
-
-
-def web_search(query: str, max_results: int = 10, site: str = "") -> str:
-    """Search the web using Ollama API if available, otherwise fall back to DuckDuckGo.
-
-    Args:
-        query: The search query
-        max_results: Maximum number of results (default 10)
-        site: Optional site restriction (e.g., 'hashicorp.com')
-
-    Returns:
-        Formatted string with search results
-    """
-    # Build search query with site restriction if provided
-    search_query = f"site:{site} {query}" if site else query
-
-    results = []
-    search_method = "unknown"
-
-    # Try Ollama first if API key is configured
-    if config.OLLAMA_API_KEY:
-        try:
-            logger.info("[WEB_SEARCH] Using Ollama search API")
-            results = ollama_web_search(search_query, max_results)
-            search_method = "Ollama"
-        except Exception as e:
-            logger.warning(f"[WEB_SEARCH] Ollama search failed, falling back to DuckDuckGo: {e}")
-            # Fall through to DuckDuckGo
-
-    # Fall back to DuckDuckGo if Ollama not available or failed
-    if not results:
-        try:
-            logger.info("[WEB_SEARCH] Using DuckDuckGo search")
-            results = ddg_web_search(search_query, max_results)
-            search_method = "DuckDuckGo"
-        except Exception as e:
-            error_str = str(e)
-            if "ratelimit" in error_str.lower():
-                return "Web search is currently rate-limited. Please try again in a few moments or configure OLLAMA_API_KEY in your .env file for unlimited searches."
+            # Add reminder based on call count
+            if call_count >= _DOC_SEARCH_LIMIT:
+                reminder = (
+                    "\n\n" + "=" * 60 + "\n"
+                    "⚠️ STOP: This is your 2nd doc search. If these results don't answer "
+                    "the question, you MUST use web_search now. No more doc searches allowed.\n"
+                    + "=" * 60
+                )
             else:
-                return f"Web search failed: {error_str}"
+                remaining = _DOC_SEARCH_LIMIT - call_count
+                reminder = (
+                    f"\n\n[Doc search {call_count}/{_DOC_SEARCH_LIMIT}. "
+                    f"If not helpful, you can try {remaining} more, then must use web_search.]"
+                )
 
-    # Format results
-    if not results:
-        return f"No web results found for query: '{query}'"
+            return formatted_results + reminder
 
-    output = [f"Found {len(results)} web result(s) via {search_method}:\n"]
+        _doc_search_tool = hashicorp_doc_search
 
-    for idx, result in enumerate(results, 1):
-        output.append(f"\n{idx}. {result['title']}")
-        output.append(f"   URL: {result['url']}")
-        output.append(f"   {result['description']}")
-        output.append("")
-
-    return "\n".join(output)
-
-
-class WebSearchInput(BaseModel):
-    """Input schema for web search tool."""
-
-    query: str = Field(
-        description="The search query (e.g., 'Python async programming best practices', 'Docker container networking')"
-    )
-    max_results: int = Field(default=10, description="Maximum number of results to return. Default is 10.")
+    except ImportError as e:
+        print(f"\nWarning: RAG dependencies not available: {e}")
+        print("  Install with: uv sync")
+    except Exception as e:
+        print(f"\nError initializing RAG: {e}")
 
 
-# Define the tools
-current_date_tool = Tool(
-    name="get_current_date",
-    description="Get the current date and time. Useful when you need to know what day it is or the current date. You can optionally specify a format string.",
-    func=get_current_date,
-    args_schema=CurrentDateInput,
-)
+# =============================================================================
+# Tool Exports
+# =============================================================================
 
-customer_notes_search_tool = Tool(
-    name="search_customer_notes",
-    description="Search through customer meeting notes in the hierarchical Customer_Notes directory. Use this when preparing SE weekly updates to gather recent customer activity, or when the user asks about specific customer meetings. Searches by customer name, content, and returns notes sorted by date (newest first).",
-    func=search_customer_notes,
-    args_schema=CustomerNotesSearchInput,
-)
+# Create web search tool (requires config for API key)
+web_search = create_web_search_tool(config)
 
-read_customer_note_tool = Tool(
-    name="read_customer_note",
-    description="Read the full content of a specific customer meeting note. Use this after finding relevant notes with search_customer_notes to get complete details about a meeting.",
-    func=read_customer_note,
-    args_schema=ReadCustomerNoteInput,
-)
-
-hashicorp_docs_search_tool = Tool(
-    name="search_hashicorp_docs",
-    description="Search HashiCorp product documentation including validated design PDFs and online docs (Terraform, Vault, Consul, Nomad, Packer, Waypoint, etc.). Provides comprehensive results from both official validated design documents and web documentation. Use this when users ask questions about HashiCorp products, features, configurations, best practices, or architecture patterns.",
-    func=search_hashicorp_docs,
-    args_schema=HashiCorpDocsSearchInput,
-)
-
-web_search_tool = Tool(
-    name="web_search",
-    description="Search the web for general information using Ollama API (if configured) or DuckDuckGo. Use this for finding current information, documentation, tutorials, Stack Overflow answers, or any online resources. Returns titles, URLs, and descriptions of relevant pages.",
-    func=web_search,
-    args_schema=WebSearchInput,
-)
-
-# Export all tools
-ALL_TOOLS = [
-    current_date_tool,
-    customer_notes_search_tool,
-    read_customer_note_tool,
-    hashicorp_docs_search_tool,
-    web_search_tool,
+# Ivan-specific tools
+IVAN_TOOLS = [
+    search_customer_notes,
+    read_customer_note,
 ]
+
+
+def get_all_tools():
+    """Get all available tools, including dynamically initialized ones.
+
+    Combines:
+    - BUILTIN_TOOLS from llm-api-server (get_current_datetime, calculate, etc.)
+    - Ivan-specific tools (customer notes)
+    - Config-dependent tools (web_search)
+    - Dynamically initialized tools (hashicorp_doc_search)
+    """
+    tools = list(BUILTIN_TOOLS)  # Start with builtin tools from llm-api-server
+    tools.extend(IVAN_TOOLS)  # Add Ivan-specific tools
+    tools.append(web_search)  # Add web search (requires config)
+
+    # Add doc search tool if RAG is enabled and initialized
+    if _doc_search_tool is not None:
+        tools.append(_doc_search_tool)
+
+    return tools
+
+
+# For backward compatibility - basic tools available at import time
+ALL_TOOLS = list(BUILTIN_TOOLS) + IVAN_TOOLS + [web_search]

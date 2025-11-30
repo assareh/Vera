@@ -2,7 +2,13 @@
 
 ## Project Overview
 
-Ivan is a Flask-based AI chatbot application that provides an OpenAI-compatible API for local LLM backends (Ollama and LM Studio). It features tool calling capabilities, optional Open Web UI integration, and a Chrome extension for automating SE Weekly Updates in Salesforce.
+Ivan is a Flask-based AI chatbot application that provides an OpenAI-compatible API for local LLM backends (Ollama and LM Studio). It features:
+- **RAG (Retrieval-Augmented Generation)** for HashiCorp documentation search
+- **Tool calling** for customer notes and web search
+- **Open Web UI integration** for a chat interface
+- **Chrome extension** for automating SE Weekly Updates in Salesforce
+
+Ivan is built on [llm-api-server](https://github.com/assareh/llm-api-server), which provides the `ServerConfig` base class and RAG infrastructure.
 
 **Model Name**: `wwtfo/ivan` (advertised in API responses)
 
@@ -10,313 +16,237 @@ Ivan is a Flask-based AI chatbot application that provides an OpenAI-compatible 
 
 ### Core Components
 
-1. **ivan.py** - Main Flask application
-   - Handles OpenAI-compatible `/v1/chat/completions` endpoint
-   - Manages tool calling and function execution
-   - Implements smart system prompt caching based on file modification time
-   - Starts optional Open Web UI integration
+1. **ivan.py** (~540 lines) - Main Flask application
+   - OpenAI-compatible `/v1/chat/completions` endpoint
+   - Tool calling loop with streaming support
+   - RAG context augmentation (injects relevant docs into user messages)
+   - Open Web UI subprocess management
+   - System prompt caching based on file modification time
 
-2. **config.py** - Configuration management
-   - Environment variable loading
-   - Backend configuration (LM Studio/Ollama)
-   - Default settings and paths
-   - Customer name aliases
+2. **config.py** (~70 lines) - Fully environment-driven configuration
+   - Extends `ServerConfig` from llm-api-server
+   - Uses `ServerConfig.from_env("IVAN_")` pattern
+   - All settings come from `.env` file - **no user edits to config.py needed**
 
-3. **tools.py** - Tool definitions using LangChain
-   - Current date/time tool
-   - Customer notes search (hierarchical directory search)
-   - Customer note reader
-   - File search tool
-   - Web search tool (DuckDuckGo)
-   - All tools use LangChain's Tool and BaseModel (pydantic_v1)
+3. **tools.py** (~310 lines) - Tool definitions and RAG functions
+   - Customer notes search/read tools (using `@tool` decorator)
+   - Web search tool (from llm-api-server)
+   - RAG initialization (`initialize_rag_at_startup()`)
+   - RAG context retrieval (`get_rag_context()`)
 
 4. **system_prompt.md** - Customizable system prompt
    - Cached and auto-reloaded on modification
    - Defines Ivan's personality and behavior
+
+### How RAG Works (Not a Tool)
+
+RAG is **automatic context augmentation**, not a tool:
+1. On every user message, `get_rag_context(query)` searches the HashiCorp docs index
+2. Relevant documentation snippets are appended to the user's message
+3. The LLM sees this context and can reference it naturally
+4. No explicit "search docs" tool call needed
 
 ### Chrome Extension (ivan-extension/)
 
 Browser extension for automating SE Weekly Updates with AI assistance.
 
 **Key Files**:
-- `manifest.json` - Extension configuration
+- `manifest.json` - Extension configuration (Manifest V3)
 - `popup.html/js/css` - Extension UI (chat interface)
 - `content.js/css` - Page interaction (extracts context, fills forms)
 - `background.js` - Background service worker
-
-**Features**:
-- Quick action buttons for common tasks
-- Context-aware (extracts opportunity title, user initials from page)
-- Chat interface for refinement
-- Auto-fill capability for Salesforce fields
 
 ## Directory Structure
 
 ```
 Ivan/
-├── ivan.py                      # Main Flask application
-├── config.py                    # Configuration management
-├── tools.py                     # Tool definitions (LangChain)
-├── hashicorp_web_search.py      # Web crawler search (LangChain FAISS)
-├── system_prompt.md             # System prompt (auto-cached)
-├── requirements.txt             # Python dependencies (includes open-webui)
-├── setup.sh                     # Automated setup script (Python + venv + deps)
-├── .env.example                 # Example environment variables
-├── .python-version              # Python version (3.12.0)
+├── ivan.py                  # Main Flask application
+├── config.py                # Configuration (extends ServerConfig)
+├── tools.py                 # Tools + RAG context functions
+├── system_prompt.md         # System prompt (auto-cached)
+├── pyproject.toml           # Dependencies and project config
+├── .env.example             # Configuration template (copy to .env)
+├── .python-version          # Python version (3.12.0)
 │
-├── notes/                       # Personal notes directory
-├── Customer_Notes/              # Symlink to customer meeting notes (optional)
-│   └── [A-Z]/                   # Alphabetically organized by customer
+├── Customer_Notes/          # Symlink to customer meeting notes (optional)
+│   └── [A-Z]/               # Alphabetically organized
 │       └── [Customer]/
 │           └── 10_Meetings/
-│               └── *.md         # Meeting notes (YYYY-MM-DD_Title.md)
+│               └── *.md     # Meeting notes (YYYY-MM-DD_Title.md)
 │
-├── hashicorp_web_docs/          # HashiCorp web documentation cache
-│   ├── pages/                   # Cached HTML content
-│   ├── index/                   # LangChain FAISS vector index
-│   │   ├── index.faiss          # FAISS vector index
-│   │   └── index.pkl            # Document metadata
-│   ├── metadata.json            # Index metadata & update tracking
-│   ├── sitemap.xml              # Cached sitemap
-│   └── chunks.json              # Document chunks
+├── hashicorp_docs_index/    # RAG index cache (auto-generated)
 │
-├── tests/                       # Test suite (see tests/README.md)
-│   ├── README.md                # Test documentation
-│   ├── test_comparison.py       # Primary regression test (REQUIRED)
-│   ├── test_debug_chunks.py     # Debug tool for search results
-│   └── test_validated_designs.py
-│
-├── ivan-extension/              # Chrome extension
+├── ivan-extension/          # Chrome extension
 │   ├── manifest.json
 │   ├── popup.html/js/css
 │   ├── content.js/css
-│   ├── background.js
-│   └── icon*.png
+│   └── background.js
 │
-├── venv/                        # Python virtual environment (3.12.0)
-├── deprecated/                  # Deprecated code (old PDF search, etc.)
-└── docs/                        # Documentation and images
+├── tests/                   # Test suite
+└── docs/                    # Documentation and images
 ```
 
 ## Technology Stack
 
-### Backend
-- **Flask 3.0.0** - Web framework
-- **LangChain 0.1.0** - Tool calling framework
-- **Requests** - HTTP client for LLM backends
+- **Flask 3.0** - Web framework
+- **llm-api-server** - ServerConfig, RAG module, builtin tools
+- **LangChain** - Tool definitions, RAG infrastructure
+- **FAISS** - Vector similarity search
+- **sentence-transformers** - Embeddings
 - **Click** - CLI argument parsing
 - **python-dotenv** - Environment variable management
+- **open-webui** - Optional chat UI
 
-### AI/ML Features
-- **sentence-transformers** - Semantic search embeddings
-- **faiss-cpu** - Vector similarity search
-- **duckduckgo-search** - Web search integration
+## Configuration
 
-### Web Scraping
-- **beautifulsoup4** - HTML parsing and content extraction
-- **requests** - HTTP client for web crawling
+### Environment Variables (.env)
 
-### Optional
-- **open-webui** - Web UI (requires Python 3.11-3.12)
-
-### Extension
-- Vanilla JavaScript (no build step)
-- Chrome Extension Manifest V3
-
-## Environment Configuration
-
-### Environment Variables
+All configuration is done via environment variables. Copy `.env.example` to `.env` and customize:
 
 ```bash
-# Backend Selection
-IVAN_BACKEND=lmstudio          # or "ollama"
-BACKEND_MODEL=openai/gpt-oss-20b  # Model name for backend
-
-# Backend Endpoints
+# Backend
+IVAN_BACKEND=lmstudio        # or "ollama"
+BACKEND_MODEL=openai/gpt-oss-20b
 LMSTUDIO_ENDPOINT=http://localhost:1234/v1
 OLLAMA_ENDPOINT=http://localhost:11434
 
-# Ivan Settings
+# Server
 IVAN_PORT=8000
 IVAN_TEMPERATURE=0.0
 SYSTEM_PROMPT_PATH=system_prompt.md
-CUSTOMER_NOTES_DIR=Customer_Notes  # Or absolute path
+
+# RAG (HashiCorp docs)
+RAG_ENABLED=true
+RAG_CACHE_DIR=hashicorp_docs_index
+RAG_DOC_SOURCES=https://developer.hashicorp.com
+RAG_UPDATE_INTERVAL_HOURS=168  # 7 days
+
+# Customer Notes
+CUSTOMER_NOTES_DIR=Customer_Notes
+
+# WebUI
+WEBUI_PORT=8001
+WEBUI_AUTH=false
+
+# Debug - Tool logging
+DEBUG_TOOLS=true                    # Enable tool call logging
+DEBUG_TOOLS_LOG_FILE=debug_tools.json  # Log file path
+DEBUG_LOG_FORMAT=json               # Format: text, json, or yaml
+DEBUG_LOG_MAX_RESPONSE_LENGTH=0     # 0 = no truncation
+
+# Debug - LLM request logging
+DEBUG_LLM_REQUESTS=true             # Log full LLM requests/responses
+DEBUG_LLM_REQUESTS_FILE=llm_requests.json
+
+# Tool loop settings
+MAX_TOOL_ITERATIONS=5               # Max tool calls per request
+TOOL_LOOP_TIMEOUT=120               # Seconds before timeout
+FIRST_ITERATION_TOOL_CHOICE=auto    # auto or required
 ```
 
-### Configuration Defaults (config.py:6-38)
-- Default backend: LM Studio
-- Default model: `openai/gpt-oss-20b`
-- Default port: 8000
-- Default temperature: 0.0
+See `.env.example` for all available options with descriptions.
 
-### Configuration File Management
+### Configuration Pattern
 
-**Important**: `config.py` is not tracked in version control to prevent git conflicts when users customize settings.
+**Important**: `config.py` should NOT be edited by users. It uses the `from_env()` pattern:
 
-- `config.py.example` - Template file tracked in git with default configuration
-- `config.py` - User-specific configuration (auto-created from template during setup)
-- Changes to defaults should be made in `config.py.example`
-- Users can modify `config.py` directly or use environment variables in `.env`
+```python
+class IvanConfig(ServerConfig):
+    @classmethod
+    def load(cls):
+        config = cls.from_env("IVAN_")
+        config.RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() == "true"
+        # ... more settings from env vars
+        return config
 
-The `setup.sh` script automatically creates `config.py` from `config.py.example` if it doesn't exist.
+config = IvanConfig.load()
+```
 
 ## Development Setup
 
-### Python Version Requirements
-- **With Open Web UI**: Python 3.11-3.12 (not compatible with 3.14+)
-- **Current setup**: Python 3.12.0 (managed by uv)
-
 ### Quick Start
 
-**First-time setup:**
 ```bash
-# Run setup script (installs uv, Python, and dependencies)
+# First-time setup
 ./setup.sh
 # OR manually:
 uv sync --extra webui
-```
 
-**Running Ivan:**
-```bash
-# No activation needed - uv handles environment automatically
-uv run python ivan.py                    # Default: LM Studio, port 8000, with Web UI
-uv run python ivan.py --backend ollama   # Use Ollama backend
+# Run Ivan
+uv run python ivan.py                    # Default settings
+uv run python ivan.py --backend ollama   # Use Ollama
 uv run python ivan.py --no-webui         # Skip Web UI
-uv run python ivan.py --port 8080        # Custom port
 uv run python ivan.py --debug            # Debug mode
 ```
 
-**What setup.sh does:**
-- Installs uv (if not already installed)
-- Installs Python 3.12.0 automatically
-- Installs all dependencies including Open Web UI
-- Creates config.py from template
-- Applies HashiCorp branding automatically
-
-### Extension Development
+### CLI Options
 
 ```bash
-cd ivan-extension
+python ivan.py [OPTIONS]
 
-# Load in Chrome:
-# 1. Navigate to chrome://extensions
-# 2. Enable "Developer mode"
-# 3. Click "Load unpacked"
-# 4. Select ivan-extension/ directory
+Options:
+  --port INTEGER               Port to run Ivan on (default: 8000)
+  --backend [ollama|lmstudio]  Backend to use
+  --model TEXT                 Model name for backend
+  --no-webui                   Don't start Open Web UI
+  --debug                      Run in debug mode
+  --help                       Show help message
 ```
 
-## Code Quality & Linting
+## Code Quality
 
-### Linting Routine
-
-Ivan uses modern Python linting tools for consistent code quality:
-- **Black**: Code formatter (120 character lines)
-- **Ruff**: Fast linter (replaces flake8, pylint, isort)
-- **MyPy**: Optional type checking
-
-#### Quick Start
+### Linting
 
 ```bash
-# Before every commit
-./lint.sh
-
-# Manual linting
-uv run black .            # Format code
-uv run ruff check --fix . # Lint with auto-fix
-```
-
-#### Standard Workflow
-
-Always run before committing:
-
-```bash
-./lint.sh
-```
-
-This script:
-1. Formats code with Black (120 char lines)
-2. Lints with Ruff (auto-fixes most issues)
-3. Verifies all checks pass
-
-#### Configuration
-
-All linting settings are in `pyproject.toml`:
-- Line length: 120 characters max
-- Python 3.12 target
-- Print statements allowed in main files
-- Auto-sorted imports (stdlib → third-party → local)
-
-#### Common Linting Issues
-
-**Unused imports** - Ruff removes automatically
-**Quote styles** - Black standardizes to double quotes
-**Import sorting** - Ruff organizes automatically
-
-#### Installing Linting Tools
-
-Linting tools are automatically installed with dev dependencies:
-
-```bash
+# Install dev dependencies
 uv sync --extra dev
+
+# Run linter
+uv run ruff check ivan.py config.py tools.py
+
+# Auto-fix issues
+uv run ruff check --fix .
+
+# Format code
+uv run black .
 ```
 
-## Common Tasks
+Configuration is in `pyproject.toml` (120 char line length, Python 3.11+).
 
-### Adding New Tools
+## Adding New Tools
 
-Tools are defined in `tools.py` using LangChain's framework:
+Tools use LangChain's `@tool` decorator:
 
 ```python
-from langchain.tools import Tool
-from langchain.pydantic_v1 import BaseModel, Field
+from langchain_core.tools import tool
 
-class MyToolInput(BaseModel):
-    param: str = Field(description="Parameter description")
+@tool
+def my_tool(param: str) -> str:
+    """Tool description for the LLM.
 
-def my_tool_function(param: str) -> str:
-    # Implementation
-    return "result"
+    Args:
+        param: Parameter description
 
-my_tool = Tool(
-    name="my_tool",
-    description="Description for the LLM",
-    func=my_tool_function,
-    args_schema=MyToolInput
-)
+    Returns:
+        Result string
+    """
+    return f"Result: {param}"
 
-# Add to ALL_TOOLS list at end of file
+# Add to ALL_TOOLS list at end of tools.py
+ALL_TOOLS = [
+    search_customer_notes,
+    read_customer_note,
+    web_search,
+    my_tool,  # Add here
+]
 ```
-
-**Important**: Always use `langchain.pydantic_v1` (not pydantic directly) for compatibility.
-
-### Modifying System Prompt
-
-1. Edit `system_prompt.md`
-2. Changes are automatically detected and cached
-3. No restart required (cache uses file mtime)
-
-### Customer Notes Setup
-
-```bash
-# Option 1: Symlink
-ln -s /path/to/Customer_Notes ./Customer_Notes
-
-# Option 2: Environment variable
-export CUSTOMER_NOTES_DIR=/path/to/Customer_Notes
-```
-
-**Expected structure**: `Customer_Notes/[A-Z]/[Customer_Name]/10_Meetings/*.md`
-
-**Search features**:
-- Converts spaces to underscores automatically
-- Case-insensitive substring matching
-- Supports custom aliases in `config.py:CUSTOMER_ALIASES`
 
 ## API Endpoints
 
 ### Health Check
 ```bash
 GET /health
+# Returns: {"status": "healthy", "backend": "lmstudio", "model": "wwtfo/ivan"}
 ```
 
 ### List Models
@@ -333,219 +263,61 @@ Content-Type: application/json
 {
   "model": "wwtfo/ivan",
   "messages": [{"role": "user", "content": "..."}],
-  "temperature": 0
+  "temperature": 0,
+  "stream": true
 }
 ```
 
-## Testing
+## RAG Index Management
 
-All tests are located in the `tests/` directory. See `tests/README.md` for detailed documentation.
+The RAG index is automatically built/updated on startup:
 
-### Regression Tests (REQUIRED)
+- **First run**: Crawls HashiCorp docs and builds index (~15-30 min)
+- **Subsequent runs**: Loads cached index (fast)
+- **Auto-update**: Rebuilds if older than `RAG_UPDATE_INTERVAL_HOURS`
 
-**IMPORTANT**: Before deploying changes to search functionality, you MUST run regression tests and ensure they pass.
+Index location: `hashicorp_docs_index/` (configurable via `RAG_CACHE_DIR`)
 
-#### Primary Regression Test
+To force rebuild, delete the index directory:
 ```bash
-source venv/bin/activate
-python tests/test_comparison.py
+rm -rf hashicorp_docs_index/
+uv run python ivan.py
 ```
-
-**Expected output**: `V2 (LangChain): ✅ PASS`
-
-This test validates the HashiCorp web documentation search implementation against known correct answers. It ensures:
-- Semantic search finds the correct documents and sections
-- Chunking strategy preserves important information
-- Results include enough context for the LLM to answer accurately
-
-**Critical test case**: Consul stale reads default configuration
-- **Query**: "what's the consul default for stale reads"
-- **Expected answer**: "By default, Consul enables stale reads and sets the max_stale value to 10 years"
-- **Source**: Consul Operating Guide for Adoption, section 8.3.6
-- **Why it matters**: This specific case caught a bug where the previous implementation returned incorrect information
-
-### Running All Tests
-
-```bash
-# Activate venv first
-source venv/bin/activate
-
-# Run primary regression test
-python tests/test_comparison.py
-
-# Run all tests
-for test in tests/test_*.py; do
-    echo "Running $test..."
-    python "$test" || echo "FAILED: $test"
-done
-```
-
-### Test Files
-
-Located in `tests/` directory:
-- `test_comparison.py` - **Primary regression test** for search quality (REQUIRED)
-- `test_debug_chunks.py` - Debug tool to inspect chunk content
-- `test_validated_designs.py` - Web crawler validation tests
-
-### When to Run Regression Tests
-
-Run `tests/test_comparison.py` before committing changes to:
-- `hashicorp_web_search.py` - Web crawler search implementation
-- `tools.py` - Tool definitions (especially `search_hashicorp_docs`)
-- Embedding models or chunking strategies
-- FAISS index configuration
-- Any RAG-related code
-
-### Adding New Regression Tests
-
-When fixing search quality bugs:
-1. Create a test with the problematic query and expected answer
-2. Add it to `tests/test_comparison.py` or create a new test file
-3. Verify the fix makes the test pass
-4. Document the test in `tests/README.md`
-5. Update this section if the test becomes critical
-
-### Test Implementation Details
-
-The current regression test (`test_comparison.py`) uses:
-- **LangChain FAISS** for vector search
-- **RecursiveCharacterTextSplitter** (1000 chars, 200 overlap)
-- **all-MiniLM-L6-v2** embeddings
-- **900 character** result preview (ensures LLM gets enough context)
-
-Changes to these parameters may require updating test expectations.
-
-## Important Patterns and Conventions
-
-### System Prompt Caching
-The system prompt is cached based on file modification time (ivan.py):
-- Reads `system_prompt.md` on first request
-- Subsequent requests check `os.path.getmtime()`
-- Auto-reloads when file changes
-
-### Tool Response Format
-Tools return plain strings. The Flask app converts them to OpenAI-compatible function call responses.
-
-### Customer Notes Naming
-- Meetings directory: `10_Meetings/`
-- File format: `YYYY-MM-DD_Title_With_Underscores.md`
-- Customer names: `Title_Case_With_Underscores`
-
-### Extension-Backend Communication
-- Extension calls `http://localhost:8000/v1/chat/completions`
-- Configurable endpoint in extension settings
-- Uses streaming responses for chat interface
-
-## Security Considerations
-
-### API Security
-- No authentication required (local development tool)
-- Binds to localhost only
-- CORS enabled for local development
-
-### Extension Permissions
-- `activeTab` - Read current Salesforce page
-- `storage` - Save settings
-- Host permission for Ivan backend URL
 
 ## Troubleshooting
 
-### Common Issues
-
 **Backend Connection Failed**
 - Check backend is running (Ollama/LM Studio)
-- Verify endpoint URL in config
+- Verify endpoint URL in `.env`
 - Confirm model name matches loaded model
 
+**RAG Not Working**
+- Check `RAG_ENABLED=true` in `.env`
+- Verify `RAG_DOC_SOURCES` is set
+- Check index exists in `hashicorp_docs_index/`
+
 **Tools Not Working**
-- Verify system prompt enables tool usage
-- Check backend model supports function calling
-- For customer notes: verify directory exists and structure is correct
+- Verify backend model supports function calling
+- Enable debug logging to see what's happening:
+  ```bash
+  DEBUG_TOOLS=true
+  DEBUG_TOOLS_LOG_FILE=debug_tools.json
+  DEBUG_LOG_FORMAT=json
+  ```
+- Check `debug_tools.json` for tool calls and responses
+- Enable `DEBUG_LLM_REQUESTS=true` to see full LLM payloads
 
 **Open Web UI Won't Start**
 - Ensure Python 3.11-3.12 (not 3.14+)
-- Install manually: `pip install open-webui`
+- Install with: `uv sync --extra webui`
 - Or use `--no-webui` flag
-
-**Extension Not Loading**
-- Check manifest.json is valid
-- Verify all referenced files exist
-- Check Chrome console for errors
-
-**Dependency Installation Issues**
-
-*ImportError: cannot import name 'cached_download' from 'huggingface_hub'*
-- This occurs when sentence-transformers is too old (< 2.3.0)
-- **Fixed in requirements.txt** (now uses `sentence-transformers>=2.3.0`)
-- If you still see this after fresh install: `pip install --upgrade sentence-transformers`
-- Verified working with sentence-transformers 5.1.2 + huggingface-hub 0.36.0
-
-**Web Documentation Index Build Fails or Hangs**
-- Check logs in terminal output for specific errors
-- Verify internet connection and access to developer.hashicorp.com
-- Check available disk space (index requires ~500MB-1GB)
-- To force complete re-scrape: `python ivan.py --force-scrape`
-- To rebuild with cached pages: `python ivan.py --rebuild-index`
-- To delete everything and start fresh: `rm -rf hashicorp_web_docs/` then run `python ivan.py`
-
-## Related Documentation
-
-- **README.md** - User-facing documentation with setup instructions
-- **SEARCH_ALTERNATIVES.md** - Documentation on search implementation alternatives
-- **ivan-extension/README.md** - Extension-specific documentation
-- **docs/** - Additional documentation and images
-
-## Git Workflow
-
-Current branch: `main`
-
-Recent development focus (from git log):
-- Customer notes search refinement
-- Extension UI improvements (commit button persistence, layout fixes)
-- WARMER assessment integration
-- Chat input handling in quick actions
-
-## CLI Reference
-
-```bash
-python ivan.py [OPTIONS]
-
-Options:
-  --port INTEGER                 Port to run Ivan on (default: 8000)
-  --backend [ollama|lmstudio]   Backend to use (default: from config)
-  --model TEXT                   Model name for backend (default: from config)
-  --no-webui                     Don't start Open Web UI
-  --rebuild-index                Force rebuild of HashiCorp documentation index
-  --force-scrape                 Clear page cache and re-scrape all pages (implies --rebuild-index)
-  --debug                        Run in debug mode
-  --help                         Show help message
-```
-
-### Index Rebuild Options
-
-**Normal rebuild** (uses cached HTML pages, fast):
-```bash
-python ivan.py --rebuild-index
-```
-- Re-discovers URLs (finds new pages)
-- Uses cached HTML if available
-- Re-chunks and re-indexes all content
-- ~5-10 minutes
-
-**Force scrape** (re-downloads all pages, slow):
-```bash
-python ivan.py --force-scrape
-```
-- Deletes all cached HTML pages
-- Re-scrapes all ~12,000+ pages from scratch
-- Re-chunks and re-indexes everything
-- ~20-30 minutes
 
 ## Notes for Claude Code
 
-- Always check `config.py` for current default values
-- When adding tools, follow the LangChain pattern in `tools.py`
-- Extension changes require manual reload in Chrome
-- System prompt changes are auto-detected (no restart needed)
-- Customer notes structure is hierarchical and case-sensitive for directories
-- The project uses Python 3.12.0 specifically (see .python-version)
+- **Config**: All settings via `.env` - never edit `config.py`
+- **Tools**: Use `@tool` decorator, add to `ALL_TOOLS` list
+- **RAG**: Not a tool - automatic context injection via `get_rag_context()`
+- **System prompt**: Edit `system_prompt.md` (auto-reloads)
+- **Extension**: Changes require manual reload in Chrome
+- **Python**: 3.12.0 specifically (see `.python-version`)
+- **Linting**: `uv run ruff check` before commits

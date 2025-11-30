@@ -33,19 +33,19 @@ echo ""
 echo -e "${GREEN}✓${NC} Dependencies installed"
 echo ""
 
-# Create config.py if it doesn't exist
+# Create .env if it doesn't exist
 echo -e "${YELLOW}Setting up configuration...${NC}"
-if [ ! -f "config.py" ]; then
-    if [ -f "config.py.example" ]; then
-        cp config.py.example config.py
-        echo -e "${GREEN}✓${NC} Created config.py from config.py.example"
-        echo "  You can customize config.py or use environment variables in .env"
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
+        echo -e "${GREEN}✓${NC} Created .env from .env.example"
+        echo -e "  ${YELLOW}Please edit .env to configure your backend settings${NC}"
     else
-        echo -e "${RED}Error: config.py.example not found${NC}"
+        echo -e "${RED}Error: .env.example not found${NC}"
         exit 1
     fi
 else
-    echo -e "${GREEN}✓${NC} config.py already exists"
+    echo -e "${GREEN}✓${NC} .env already exists"
 fi
 
 # Apply HashiCorp branding to Open Web UI
@@ -67,6 +67,7 @@ echo "Or without the WebUI:"
 echo "  uv run python ivan.py --no-webui"
 echo ""
 echo "Note: Before running, make sure you have:"
-echo "  1. LM Studio or Ollama running with a model loaded"
-echo "  2. (Optional) Customer_Notes directory symlinked"
+echo "  1. Configured .env with your backend settings (LM Studio or Ollama)"
+echo "  2. LM Studio or Ollama running with a model loaded"
+echo "  3. (Optional) Customer_Notes directory symlinked"
 echo ""

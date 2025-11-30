@@ -27,9 +27,6 @@ wheels/
 .env
 .venv
 
-# User-specific configuration (use config.py.example as template)
-config.py
-
 # IDE
 .vscode/
 .idea/
@@ -47,9 +44,12 @@ Thumbs.db
 
 # Logs
 *.log
+debug_tools.json
+llm_requests.json
 
 # Cache directories
 hashicorp_web_docs/
+hashicorp_docs_index/
 
 # Open Web UI runtime data
 webui.db

@@ -1,199 +1,111 @@
 # Ivan Test Suite
 
-This directory contains tests for the Ivan AI assistant, focused on validating HashiCorp documentation search quality.
+This directory contains tests for the Ivan AI assistant, focused on validating HashiCorp documentation search quality and LLM reasoning.
 
 ## Test Files
 
-### Regression Tests (Required)
+### `test_certification.py` - Primary Regression Test
 
-#### `test_certification.py` ⭐ PRIMARY TEST
 **Purpose**: End-to-end regression test using HashiCorp certification practice questions.
 
 **What it tests**:
-- Full Ivan pipeline: API → search → LLM → response
+- Full Ivan pipeline: API → RAG search → LLM → response
 - Uses real HashiCorp certification questions as test cases
 - Tests Ivan's ability to answer technical questions correctly
 - Validates search quality + LLM reasoning together
 
 **Requirements**:
-- **Ivan must be running**: `python ivan.py` in a separate terminal
+- **Ivan must be running**: `uv run python ivan.py` in a separate terminal
 - Backend LLM must be available (LM Studio/Ollama)
 
 **Test data**:
 - Questions: `tests/certification_questions.json`
-- Source: [Vault Associate (003) Practice Questions](https://developer.hashicorp.com/vault/tutorials/associate-cert-003/associate-questions-003)
-- 14 questions: True/False, Multiple Choice, Multiple Answer
+- Sources: HashiCorp certification practice exams
+  - [Vault Associate (003)](https://developer.hashicorp.com/vault/tutorials/associate-cert-003/associate-questions-003)
+  - [Consul Associate (003)](https://developer.hashicorp.com/consul/tutorials/associate-cert-003/associate-questions-003)
+  - [Terraform Associate (003)](https://developer.hashicorp.com/terraform/tutorials/certification-003/associate-questions-003)
+- Question types: True/False, Multiple Choice, Multiple Answer
 
 **Run**:
 ```bash
 # Terminal 1: Start Ivan
-source venv/bin/activate
-python ivan.py
+uv run python ivan.py
 
-# Terminal 2: Run test
-source venv/bin/activate
-python tests/test_certification.py
+# Terminal 2: Run tests
+uv run python tests/test_certification.py
+
+# With HTML report
+uv run python tests/test_certification.py --html tests/certification_report.html
+
+# With JSON output
+uv run python tests/test_certification.py --json tests/results.json
+
+# Verbose mode (show response previews)
+uv run python tests/test_certification.py -v
+
+# Run limited tests
+uv run python tests/test_certification.py -n 10
 ```
 
 **Expected output**: Pass rate depends on LLM quality. Aim for 80%+ pass rate.
 
-**Adding new questions**: Add to `certification_questions.json` or scrape new certification pages.
-
 ---
 
-#### `test_comparison.py`
-**Purpose**: Low-level regression test for search quality (no LLM required).
+## Test Data
 
-**What it tests**:
-- Tests the web crawler search implementation (hashicorp_web_search.py)
-- Validates search accuracy against known correct answers
-- Ensures chunking and retrieval strategies work correctly
-- Multiple test cases covering different products and query types
+### `certification_questions.json`
 
-**Current test cases**:
+JSON file containing HashiCorp certification practice questions. Each question has:
 
-1. **Consul Stale Reads Default**
-   - Query: "what's the consul default for stale reads"
-   - Expected: "By default, Consul enables stale reads and sets the max_stale value to 10 years"
-   - Source: Consul Operating Guide for Adoption, section 8.3.6
-
-2. **Vault Disk Throughput Requirements**
-   - Query: "what disk throughput is needed to run vault"
-   - Expected: "Small clusters: 75+ MB/s, Large clusters: 250+ MB/s"
-   - Source: Vault Solution Design Guide - Validated Designs, Detailed Design section
-
-**Pass criteria**:
-- Each test case has `must_contain`, `should_contain`, and `must_not_contain` criteria
-- Test passes with 75% or higher score
-- All test cases must pass for overall pass
-
-**Run**:
-```bash
-source venv/bin/activate
-python tests/test_comparison.py
-```
-
-**Expected output**: `Overall: 2/2 tests passed`
-
-**Adding new test cases**: Simply add a new dictionary to the `TEST_CASES` list in the file
-
----
-
-### Debug & Development Tools
-
-#### `test_debug_chunks.py`
-**Purpose**: Debug tool to inspect full chunk content and understand retrieval behavior.
-
-**What it does**:
-- Runs a search query
-- Shows full content of retrieved chunks (not just preview)
-- Helps diagnose search quality issues
-- Useful when search isn't returning expected results
-
-**Usage**:
-```bash
-source venv/bin/activate
-python tests/test_debug_chunks.py
-```
-
-Edit the file to change the query you want to debug.
-
-#### `test_validated_designs.py`
-**Purpose**: Test web crawler's ability to discover validated-designs pages.
-
-**What it tests**:
-- Sitemap parsing
-- Validated-designs URL discovery
-- robots.txt override for validated-designs
-- Product categorization
-
-**Usage**:
-```bash
-source venv/bin/activate
-python tests/test_validated_designs.py
-```
-
----
-
-## Running All Tests
-
-To run the main regression test:
-
-```bash
-source venv/bin/activate
-python tests/test_comparison.py
-```
-
-To run all tests (including debug/dev tools):
-
-```bash
-source venv/bin/activate
-for test in tests/test_*.py; do
-    echo "Running $test..."
-    python "$test" || echo "FAILED: $test"
-done
-```
-
-## Adding New Regression Tests
-
-When you discover a search quality issue or want to validate specific behavior:
-
-1. Add a new test case to `TEST_CASES` in `test_comparison.py`:
-
-```python
+```json
 {
-    "name": "Your Test Name",
-    "query": "your search query",
-    "product": "consul",  # or "vault", "terraform", etc.
-    "source": "Documentation source",
-    "expected": "What the answer should be",
-    "must_contain": [
-        ("critical", "keyword"),  # Both must be present
-    ],
-    "should_contain": [
-        "important",  # Should be present
-        "keyword",
-    ],
-    "must_not_contain": [
-        "wrong info",  # Should NOT be present
-    ],
+  "id": "vault-003-001",
+  "product": "vault",
+  "type": "true_false",
+  "question": "The question text...",
+  "options": ["A. True", "B. False"],
+  "correct_answer": "A",
+  "explanation": "Why this answer is correct..."
 }
 ```
 
-2. Run the test to verify it works:
-```bash
-python tests/test_comparison.py
-```
+**Question types**:
+- `true_false` - True/False questions
+- `multiple_choice` - Single correct answer
+- `multiple_answer` - Multiple correct answers (e.g., "A, C")
 
-3. Commit the updated test case
+**Adding new questions**: Add entries to `certification_questions.json` following the schema above.
 
-## Test Requirements
-
-- Tests require the search index to be built (happens automatically on first run)
-- Initial index build can take a few minutes
-- Subsequent runs use cached index (much faster)
+---
 
 ## When to Run Tests
 
-**Always run regression tests** (`test_comparison.py`) before committing changes to:
-- `hashicorp_web_search.py` - Web crawler search implementation
-- `tools.py` - Tool definitions (especially search-related)
-- Embedding models or chunking strategies
-- FAISS index configuration
-- Any RAG-related code
+Run certification tests before committing changes to:
+- `ivan.py` - Main application
+- `tools.py` - Tool definitions
+- RAG configuration in `.env`
+- Any search or LLM-related code
+
+---
 
 ## CI/CD Integration (Future)
 
 These tests should be run in CI/CD:
 1. Run regression tests on every PR
-2. Require 100% pass rate for search-related changes
-3. Update tests when intentionally changing search behavior
-4. Block merge if tests fail
+2. Require 80%+ pass rate for changes
+3. Block merge if tests fail significantly
+
+---
 
 ## Troubleshooting
 
-**Index not found**: Run Ivan once to build the index, or run `python tests/test_comparison.py` to trigger index build.
+**Ivan not running**: Start Ivan first with `uv run python ivan.py`
 
-**Tests failing**: Use `test_debug_chunks.py` to inspect what content is being returned and why it might not match expectations.
+**Connection refused**: Check Ivan is running on the expected port (default: 8000)
 
-**Slow tests**: First run is slow (building index), subsequent runs are fast (using cache).
+**Low pass rate**:
+- Check LLM model is loaded correctly
+- Verify RAG index is built (`hashicorp_docs_index/` exists)
+- Try with a different/larger model
+
+**Slow tests**: First run may be slow if RAG index needs to be built (~15-30 min)

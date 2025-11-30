@@ -1,918 +1,168 @@
-"""Ivan - A Flask chatbot with tool calling capabilities."""
+"""Ivan - A HashiCorp documentation assistant using LLM API Server."""
 
 import json
-import logging
 import os
-import re
 import signal
-import subprocess
 import sys
-import time
-from collections.abc import Generator
-from pathlib import Path
-from typing import Any
+from datetime import datetime
 
 import click
-import requests
-from flask import Flask, Response, jsonify, request, stream_with_context
-from flask_cors import CORS
+from dotenv import load_dotenv
 
-# Disable tokenizers parallelism warning when forking
-# (We load embeddings before Flask potentially forks workers)
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# Load .env early so DEBUG_LLM_REQUESTS is available
+load_dotenv()
 
-# Print loading message before heavy ML imports
-print("Loading Ivan... (Initializing AI libraries, this may take 5-15 seconds...)")
+print("Loading Ivan...\n")
+
+# Monkey-patch backend calls to log LLM request payloads
+if os.getenv("DEBUG_LLM_REQUESTS", "").lower() == "true":
+    import llm_api_server.backends as backends
+
+    _original_call_ollama = backends.call_ollama
+    _original_call_lmstudio = backends.call_lmstudio
+    _request_log_file = os.getenv("DEBUG_LLM_REQUESTS_FILE", "llm_requests.json")
+
+    def _log_request(backend: str, payload: dict):
+        """Log LLM request payload to file (JSON Lines format for jq compatibility)."""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "backend": backend,
+            "payload": payload,
+        }
+        with open(_request_log_file, "a") as f:
+            # JSON Lines format: one JSON object per line (no indent, no separator)
+            f.write(json.dumps(log_entry, default=str) + "\n")
+        print(f"[DEBUG] LLM request logged to {_request_log_file}")
+
+    def _patched_call_ollama(messages, tools, config, temperature=0.0, stream=False, tool_choice=None):
+        # Build payload same way as original
+        openai_tools = []
+        for tool in tools:
+            schema = backends.get_tool_schema(tool)
+            tool_def = {
+                "type": "function",
+                "function": {"name": tool.name, "description": tool.description, "parameters": schema},
+            }
+            openai_tools.append(tool_def)
+
+        payload = {
+            "model": config.BACKEND_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": stream,
+        }
+        if tool_choice == "none":
+            payload["tool_choice"] = "none"
+        elif openai_tools:
+            payload["tools"] = openai_tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
+
+        _log_request("ollama", payload)
+        return _original_call_ollama(messages, tools, config, temperature, stream, tool_choice)
+
+    def _patched_call_lmstudio(messages, tools, config, temperature=0.0, stream=False, tool_choice=None):
+        # Build payload same way as original
+        openai_tools = []
+        for tool in tools:
+            schema = backends.get_tool_schema(tool)
+            tool_def = {
+                "type": "function",
+                "function": {"name": tool.name, "description": tool.description, "parameters": schema},
+            }
+            openai_tools.append(tool_def)
+
+        payload = {
+            "model": config.BACKEND_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": stream,
+        }
+        if tool_choice == "none":
+            payload["tool_choice"] = "none"
+        elif openai_tools:
+            payload["tools"] = openai_tools
+            if tool_choice:
+                payload["tool_choice"] = tool_choice
+
+        _log_request("lmstudio", payload)
+        return _original_call_lmstudio(messages, tools, config, temperature, stream, tool_choice)
+
+    backends.call_ollama = _patched_call_ollama
+    backends.call_lmstudio = _patched_call_lmstudio
+
+    # Also patch in the server module (it imports them directly)
+    import llm_api_server.server as server
+    server.call_ollama = _patched_call_ollama
+    server.call_lmstudio = _patched_call_lmstudio
+    print("[DEBUG] LLM request logging enabled")
+
+from llm_api_server import LLMServer
 
 import config
-from hashicorp_doc_search import initialize_doc_search
-from tools import ALL_TOOLS
+from tools import ALL_TOOLS, get_all_tools, initialize_rag_at_startup
 
-# Gemini imports (lazy loaded when needed)
-_gemini_client = None
+# Global server reference for the init hook
+_server = None
 
 
-app = Flask(__name__)
-CORS(app)
+def initialize_ivan():
+    """Initialization hook called during server startup."""
+    global _server
 
-# Configure tool debug logging
-tools_logger = logging.getLogger("ivan.tools")
-if config.DEBUG_TOOLS:
-    # Create file handler
-    log_file = Path(config.DEBUG_TOOLS_LOG_FILE)
-    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
+    # Initialize RAG index (this creates the doc_search tool)
+    if config.config.RAG_ENABLED:
+        initialize_rag_at_startup()
+        print()
 
-    # Create formatter
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    file_handler.setFormatter(formatter)
-
-    # Configure multiple loggers to write to the debug file
-    for logger_name in ["ivan.tools", "tools", "hashicorp_doc_search"]:
-        logger_obj = logging.getLogger(logger_name)
-        logger_obj.setLevel(logging.DEBUG)
-        logger_obj.addHandler(file_handler)
-
-    print(f"Tool debug logging enabled: {log_file.absolute()}")
-    print("  Logging: ivan.tools, tools, hashicorp_doc_search")
-else:
-    tools_logger.setLevel(logging.WARNING)
-
-# Global variables for caching
-_system_prompt_cache: str | None = None
-_system_prompt_mtime: float | None = None
-_webui_process: subprocess.Popen | None = None
-
-
-def get_system_prompt() -> str:
-    """Load system prompt from markdown file with smart caching."""
-    global _system_prompt_cache, _system_prompt_mtime
-
-    prompt_path = Path(config.SYSTEM_PROMPT_PATH)
-
-    if not prompt_path.exists():
-        return "You are Ivan, a helpful AI assistant."
-
-    try:
-        current_mtime = prompt_path.stat().st_mtime
-
-        # Check if cache is valid
-        if _system_prompt_cache is not None and _system_prompt_mtime == current_mtime:
-            return _system_prompt_cache
-
-        # Read and cache the prompt
-        _system_prompt_cache = prompt_path.read_text(encoding="utf-8")
-        _system_prompt_mtime = current_mtime
-
-        return _system_prompt_cache
-    except Exception as e:
-        print(f"Error reading system prompt: {e}")
-        return "You are Ivan, a helpful AI assistant."
-
-
-def get_backend_endpoint() -> str:
-    """Get the appropriate backend endpoint based on configuration."""
-    if config.BACKEND_TYPE == "lmstudio":
-        return config.LMSTUDIO_ENDPOINT
-    elif config.BACKEND_TYPE == "ollama":
-        return config.OLLAMA_ENDPOINT
-    elif config.BACKEND_TYPE == "gemini":
-        return "gemini"  # Gemini uses SDK, not HTTP endpoint
-    else:
-        raise ValueError(f"Unknown backend type: {config.BACKEND_TYPE}")
-
-
-def get_gemini_client():
-    """Get or create the Gemini client (lazy loaded)."""
-    global _gemini_client
-    if _gemini_client is None:
-        from google import genai
-        from google.genai.types import HttpOptions
-
-        # Set environment variables for Vertex AI if configured
-        if config.GOOGLE_GENAI_USE_VERTEXAI.lower() in ("true", "1", "yes"):
-            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
-        if config.GOOGLE_CLOUD_PROJECT:
-            os.environ["GOOGLE_CLOUD_PROJECT"] = config.GOOGLE_CLOUD_PROJECT
-        if config.GOOGLE_CLOUD_LOCATION:
-            os.environ["GOOGLE_CLOUD_LOCATION"] = config.GOOGLE_CLOUD_LOCATION
-
-        # Create client with v1 API
-        _gemini_client = genai.Client(http_options=HttpOptions(api_version="v1"))
-
-    return _gemini_client
-
-
-def call_gemini_with_tools(messages: list, tools: list, temperature: float = 0.0) -> dict[str, Any]:
-    """Call Gemini with tool support using the Google Gen AI SDK."""
-    from google.genai.types import FunctionDeclaration, GenerateContentConfig, Tool
-
-    client = get_gemini_client()
-
-    # Convert LangChain tools to Gemini function declarations
-    function_declarations = []
-    for tool in tools:
-        # Get schema using the appropriate method (pydantic v1 vs v2)
-        if hasattr(tool.args_schema, "model_json_schema"):
-            schema = tool.args_schema.model_json_schema()
-        elif hasattr(tool.args_schema, "schema"):
-            schema = tool.args_schema.schema()
-        else:
-            schema = {}
-
-        # Convert schema to Gemini format
-        parameters = {
-            "type": schema.get("type", "object"),
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-        }
-
-        function_declarations.append(
-            FunctionDeclaration(name=tool.name, description=tool.description, parameters=parameters)
-        )
-
-    # Create tools config
-    gemini_tools = [Tool(function_declarations=function_declarations)] if function_declarations else []
-
-    # Create generation config
-    config_obj = GenerateContentConfig(tools=gemini_tools, temperature=temperature)
-
-    # Convert messages to Gemini format
-    # Gemini expects a simple list of content parts or a string
-    # For now, we'll combine all messages into a single prompt
-    # (System message is handled separately)
-    user_messages = [msg for msg in messages if msg["role"] != "system"]
-
-    # Build contents list for Gemini
-    contents = []
-    for msg in user_messages:
-        role = "user" if msg["role"] == "user" else "model"
-        if msg["role"] == "tool":
-            # Tool results need special handling
-            contents.append({"role": "function", "parts": [{"text": msg["content"]}]})
-        else:
-            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
-
-    # Call Gemini API
-    response = client.models.generate_content(model=config.BACKEND_MODEL, contents=contents, config=config_obj)
-
-    # Convert response to OpenAI-like format
-    result = {"message": {"role": "assistant", "content": ""}, "tool_calls": []}
-
-    if response.candidates and len(response.candidates) > 0:
-        candidate = response.candidates[0]
-        if candidate.content and candidate.content.parts:
-            for part in candidate.content.parts:
-                if hasattr(part, "text") and part.text:
-                    result["message"]["content"] += part.text
-                elif hasattr(part, "function_call") and part.function_call:
-                    # Convert function call to OpenAI format
-                    func_call = part.function_call
-                    result["tool_calls"].append(
-                        {
-                            "id": f"call_{int(time.time())}",
-                            "type": "function",
-                            "function": {
-                                "name": func_call.name,
-                                "arguments": dict(func_call.args) if func_call.args else {},
-                            },
-                        }
-                    )
-
-    return result
-
-
-def call_ollama_with_tools(messages: list, tools: list, temperature: float = 0.0, stream: bool = False) -> Any:
-    """Call Ollama with tool support."""
-    endpoint = f"{config.OLLAMA_ENDPOINT}/api/chat"
-
-    # Convert tools to Ollama format
-    ollama_tools = []
-    for tool in tools:
-        # Get schema using the appropriate method (pydantic v1 vs v2)
-        if hasattr(tool.args_schema, "model_json_schema"):
-            schema = tool.args_schema.model_json_schema()
-        elif hasattr(tool.args_schema, "schema"):
-            schema = tool.args_schema.schema()
-        else:
-            schema = {}
-
-        tool_def = {
-            "type": "function",
-            "function": {"name": tool.name, "description": tool.description, "parameters": schema},
-        }
-        ollama_tools.append(tool_def)
-
-    payload = {
-        "model": config.BACKEND_MODEL,
-        "messages": messages,
-        "tools": ollama_tools,
-        "stream": stream,
-        "options": {"temperature": temperature},
-    }
-
-    response = requests.post(endpoint, json=payload, stream=stream)
-    response.raise_for_status()
-
-    return response
-
-
-def call_lmstudio_with_tools(messages: list, tools: list, temperature: float = 0.0, stream: bool = False) -> Any:
-    """Call LM Studio with tool support."""
-    endpoint = f"{config.LMSTUDIO_ENDPOINT}/chat/completions"
-
-    # Convert tools to OpenAI format
-    openai_tools = []
-    for tool in tools:
-        # Get schema using the appropriate method (pydantic v1 vs v2)
-        if hasattr(tool.args_schema, "model_json_schema"):
-            schema = tool.args_schema.model_json_schema()
-        elif hasattr(tool.args_schema, "schema"):
-            schema = tool.args_schema.schema()
-        else:
-            schema = {}
-
-        tool_def = {
-            "type": "function",
-            "function": {"name": tool.name, "description": tool.description, "parameters": schema},
-        }
-        openai_tools.append(tool_def)
-
-    payload = {
-        "model": config.BACKEND_MODEL,
-        "messages": messages,
-        "tools": openai_tools,
-        "temperature": temperature,
-        "stream": stream,
-    }
-
-    response = requests.post(endpoint, json=payload, stream=stream)
-    response.raise_for_status()
-
-    return response
-
-
-def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
-    """Execute a tool by name with given input."""
-    # Log tool call
-    if config.DEBUG_TOOLS:
-        tools_logger.debug("=" * 80)
-        tools_logger.debug(f"TOOL CALL: {tool_name}")
-        tools_logger.debug(f"INPUT: {json.dumps(tool_input, indent=2)}")
-
-    for tool in ALL_TOOLS:
-        if tool.name == tool_name:
-            try:
-                result = tool.func(**tool_input)
-                result_str = str(result)
-
-                # Log tool response
-                if config.DEBUG_TOOLS:
-                    # Truncate very long responses for readability
-                    if len(result_str) > 1000:
-                        truncated = result_str[:1000] + f"\n... (truncated, total length: {len(result_str)} chars)"
-                        tools_logger.debug(f"RESPONSE: {truncated}")
-                    else:
-                        tools_logger.debug(f"RESPONSE: {result_str}")
-                    tools_logger.debug("=" * 80 + "\n")
-
-                return result_str
-            except Exception as e:
-                error_msg = f"Error executing tool {tool_name}: {e!s}"
-
-                # Log error
-                if config.DEBUG_TOOLS:
-                    tools_logger.error(f"ERROR: {error_msg}")
-                    tools_logger.debug("=" * 80 + "\n")
-
-                return error_msg
-
-    not_found_msg = f"Tool {tool_name} not found"
-
-    # Log error
-    if config.DEBUG_TOOLS:
-        tools_logger.error(f"ERROR: {not_found_msg}")
-        tools_logger.debug("=" * 80 + "\n")
-
-    return not_found_msg
-
-
-def stream_chat_response(messages: list, temperature: float, max_iterations: int = 5) -> Generator[str, None, None]:
-    """Stream chat completion with tool calling loop."""
-    # Add system prompt
-    system_prompt = get_system_prompt()
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
-
-    iteration = 0
-    while iteration < max_iterations:
-        iteration += 1
-
-        # Call the backend (non-streaming for tool calls, then stream final response)
-        if config.BACKEND_TYPE == "ollama":
-            response = call_ollama_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
-            response_data = response.json()
-        elif config.BACKEND_TYPE == "gemini":
-            response_data = call_gemini_with_tools(full_messages, ALL_TOOLS, temperature)
-        else:  # lmstudio
-            response = call_lmstudio_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
-            response_data = response.json()
-
-        # Handle Gemini response format
-        if config.BACKEND_TYPE == "gemini":
-            message = response_data.get("message", {})
-            tool_calls = response_data.get("tool_calls", [])
-
-            if not tool_calls:
-                # No tool calls, stream the final response
-                content = message.get("content", "")
-
-                # Stream the content in small chunks while preserving formatting
-                tokens = re.split(r"(\s+)", content)
-
-                for token in tokens:
-                    if token:  # Skip empty strings
-                        chunk = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": config.IVAN_MODEL_NAME,
-                            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
-                        }
-                        yield f"data: {json.dumps(chunk)}\n\n"
-
-                # Send final chunk
-                final_chunk = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": config.IVAN_MODEL_NAME,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                }
-                yield f"data: {json.dumps(final_chunk)}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            # Add assistant message with tool calls to conversation
-            full_messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": tool_calls})
-
-            # Execute tools and add results
-            for tool_call in tool_calls:
-                function = tool_call.get("function", {})
-                tool_name = function.get("name")
-                tool_args = function.get("arguments", {})
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-
-                # Add tool result to messages
-                full_messages.append({"role": "tool", "content": tool_result})
-
-        # Handle Ollama response format
-        elif config.BACKEND_TYPE == "ollama":
-            message = response_data.get("message", {})
-            tool_calls = message.get("tool_calls", [])
-
-            if not tool_calls:
-                # No tool calls, stream the final response
-                content = message.get("content", "")
-
-                # Stream the content in small chunks while preserving formatting
-                # Split by words but keep newlines and formatting
-                # Split on whitespace but keep the whitespace (including newlines)
-                tokens = re.split(r"(\s+)", content)
-
-                for token in tokens:
-                    if token:  # Skip empty strings
-                        chunk = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": config.IVAN_MODEL_NAME,
-                            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
-                        }
-                        yield f"data: {json.dumps(chunk)}\n\n"
-
-                # Send final chunk
-                final_chunk = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": config.IVAN_MODEL_NAME,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                }
-                yield f"data: {json.dumps(final_chunk)}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            # Add assistant message with tool calls
-            full_messages.append(message)
-
-            # Execute tools and add results
-            for tool_call in tool_calls:
-                function = tool_call.get("function", {})
-                tool_name = function.get("name")
-                tool_args = function.get("arguments", {})
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-
-                # Add tool result to messages
-                full_messages.append({"role": "tool", "content": tool_result})
-
-        else:  # LM Studio (OpenAI format)
-            choice = response_data.get("choices", [{}])[0]
-            message = choice.get("message", {})
-            tool_calls = message.get("tool_calls", [])
-
-            if not tool_calls:
-                # No tool calls, stream the final response
-                content = message.get("content", "")
-
-                # Stream the content in small chunks while preserving formatting
-                # Split by words but keep newlines and formatting
-                # Split on whitespace but keep the whitespace (including newlines)
-                tokens = re.split(r"(\s+)", content)
-
-                for token in tokens:
-                    if token:  # Skip empty strings
-                        chunk = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": config.IVAN_MODEL_NAME,
-                            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
-                        }
-                        yield f"data: {json.dumps(chunk)}\n\n"
-
-                # Send final chunk
-                final_chunk = {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": config.IVAN_MODEL_NAME,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                }
-                yield f"data: {json.dumps(final_chunk)}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            # Add assistant message with tool calls
-            full_messages.append(message)
-
-            # Execute tools and add results
-            for tool_call in tool_calls:
-                function = tool_call.get("function", {})
-                tool_name = function.get("name")
-                tool_args = json.loads(function.get("arguments", "{}"))
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-
-                # Add tool result to messages
-                full_messages.append({"role": "tool", "tool_call_id": tool_call.get("id"), "content": tool_result})
-
-    # Max iterations reached
-    error_chunk = {
-        "id": f"chatcmpl-{int(time.time())}",
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": config.IVAN_MODEL_NAME,
-        "choices": [
-            {
-                "index": 0,
-                "delta": {"content": "I apologize, but I've reached the maximum number of tool calling iterations."},
-                "finish_reason": "length",
-            }
-        ],
-    }
-    yield f"data: {json.dumps(error_chunk)}\n\n"
-    yield "data: [DONE]\n\n"
-
-
-def process_chat_completion(messages: list, temperature: float, stream: bool, max_iterations: int = 5) -> Any:
-    """Process chat completion with tool calling loop."""
-    # Add system prompt
-    system_prompt = get_system_prompt()
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
-
-    iteration = 0
-    while iteration < max_iterations:
-        iteration += 1
-
-        # Call the backend
-        if config.BACKEND_TYPE == "ollama":
-            response = call_ollama_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
-            response_data = response.json()
-        elif config.BACKEND_TYPE == "gemini":
-            response_data = call_gemini_with_tools(full_messages, ALL_TOOLS, temperature)
-        else:  # lmstudio
-            response = call_lmstudio_with_tools(full_messages, ALL_TOOLS, temperature, stream=False)
-            response_data = response.json()
-
-        # Handle Gemini response format
-        if config.BACKEND_TYPE == "gemini":
-            message = response_data.get("message", {})
-            tool_calls = response_data.get("tool_calls", [])
-
-            if not tool_calls:
-                # No tool calls, return the final response
-                return {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": config.IVAN_MODEL_NAME,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {"role": "assistant", "content": message.get("content", "")},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-                }
-
-            # Add assistant message with tool calls
-            full_messages.append({"role": "assistant", "content": message.get("content", ""), "tool_calls": tool_calls})
-
-            # Execute tools and add results
-            for tool_call in tool_calls:
-                function = tool_call.get("function", {})
-                tool_name = function.get("name")
-                tool_args = function.get("arguments", {})
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-
-                # Add tool result to messages
-                full_messages.append({"role": "tool", "content": tool_result})
-
-        # Handle Ollama response format
-        elif config.BACKEND_TYPE == "ollama":
-            message = response_data.get("message", {})
-            tool_calls = message.get("tool_calls", [])
-
-            if not tool_calls:
-                # No tool calls, return the final response
-                return {
-                    "id": f"chatcmpl-{int(time.time())}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": config.IVAN_MODEL_NAME,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {"role": "assistant", "content": message.get("content", "")},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-                }
-
-            # Add assistant message with tool calls
-            full_messages.append(message)
-
-            # Execute tools and add results
-            for tool_call in tool_calls:
-                function = tool_call.get("function", {})
-                tool_name = function.get("name")
-                tool_args = function.get("arguments", {})
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-
-                # Add tool result to messages
-                full_messages.append({"role": "tool", "content": tool_result})
-
-        else:  # LM Studio (OpenAI format)
-            choice = response_data.get("choices", [{}])[0]
-            message = choice.get("message", {})
-            tool_calls = message.get("tool_calls", [])
-
-            if not tool_calls:
-                # No tool calls, return the final response
-                return response_data
-
-            # Add assistant message with tool calls
-            full_messages.append(message)
-
-            # Execute tools and add results
-            for tool_call in tool_calls:
-                function = tool_call.get("function", {})
-                tool_name = function.get("name")
-                tool_args = json.loads(function.get("arguments", "{}"))
-
-                # Execute the tool
-                tool_result = execute_tool(tool_name, tool_args)
-
-                # Add tool result to messages
-                full_messages.append({"role": "tool", "tool_call_id": tool_call.get("id"), "content": tool_result})
-
-    # Max iterations reached
-    return {
-        "id": f"chatcmpl-{int(time.time())}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": config.IVAN_MODEL_NAME,
-        "choices": [
-            {
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": "I apologize, but I've reached the maximum number of tool calling iterations.",
-                },
-                "finish_reason": "length",
-            }
-        ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
-
-
-@app.route("/v1/models", methods=["GET"])
-def list_models():
-    """List available models."""
-    return jsonify(
-        {
-            "object": "list",
-            "data": [
-                {
-                    "id": config.IVAN_MODEL_NAME,
-                    "object": "model",
-                    "created": int(time.time()),
-                    "owned_by": "ivan",
-                    "permission": [],
-                    "root": config.IVAN_MODEL_NAME,
-                    "parent": None,
-                }
-            ],
-        }
-    )
-
-
-@app.route("/v1/chat/completions", methods=["POST"])
-def chat_completions():
-    """Handle chat completion requests."""
-    try:
-        data = request.get_json()
-
-        messages = data.get("messages", [])
-        temperature = data.get("temperature", config.DEFAULT_TEMPERATURE)
-        stream = data.get("stream", False)
-
-        if not messages:
-            return jsonify({"error": "No messages provided"}), 400
-
-        if stream:
-            # Return streaming response
-            return Response(
-                stream_with_context(stream_chat_response(messages, temperature)),
-                mimetype="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-        else:
-            # Process the chat completion (non-streaming)
-            result = process_chat_completion(messages, temperature, False)
-
-            # Update model name in response
-            if isinstance(result, dict):
-                result["model"] = config.IVAN_MODEL_NAME
-
-            return jsonify(result)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/health", methods=["GET"])
-def health():
-    """Health check endpoint."""
-    return jsonify({"status": "healthy", "backend": config.BACKEND_TYPE, "model": config.IVAN_MODEL_NAME})
-
-
-@app.route("/index/status", methods=["GET"])
-def index_status():
-    """Get status of the web documentation index."""
-    from web_index_manager import get_status
-
-    status = get_status()
-    return jsonify(status)
-
-
-def is_port_available(port: int) -> bool:
-    """Check if a port is available for binding."""
-    import socket
-
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", port))
-            return True
-    except OSError:
-        return False
-
-
-def find_available_port(starting_port: int, max_attempts: int = 10) -> int:
-    """Find an available port starting from the given port."""
-    for i in range(max_attempts):
-        port = starting_port + i
-        if is_port_available(port):
-            return port
-    raise RuntimeError(f"Could not find available port starting from {starting_port}")
-
-
-def wait_for_webui_ready(webui_port: int, timeout: int = 30) -> bool:
-    """Wait for Open Web UI to be ready to accept requests.
-
-    Args:
-        webui_port: Port where Open Web UI is running
-        timeout: Maximum seconds to wait (default: 30)
-
-    Returns:
-        True if Open Web UI is ready, False if timeout
-    """
-    print("Waiting for Open Web UI to be ready", end="", flush=True)
-    start_time = time.time()
-
-    while time.time() - start_time < timeout:
-        try:
-            # Try to connect to Open Web UI health endpoint
-            response = requests.get(f"http://localhost:{webui_port}/health", timeout=1)
-            if response.status_code == 200:
-                print()  # New line after dots
-                return True
-        except (requests.ConnectionError, requests.Timeout):
-            # Not ready yet, keep waiting
-            pass
-
-        # Print progress dots
-        print(".", end="", flush=True)
-        time.sleep(0.5)
-
-    print()  # New line after dots
-    return False
-
-
-def start_webui(port: int):
-    """Start Open Web UI as a subprocess."""
-    global _webui_process
-
-    try:
-        # Find open-webui executable (check .venv first for uv, then venv for pip, fallback to system)
-        parent_dir = Path(__file__).parent
-        venv_openwebui = None
-        for venv_name in [".venv", "venv"]:
-            candidate = parent_dir / venv_name / "bin" / "open-webui"
-            if candidate.exists():
-                venv_openwebui = candidate
-                break
-
-        if venv_openwebui:
-            openwebui_cmd = str(venv_openwebui)
-        else:
-            result = subprocess.run(["which", "open-webui"], capture_output=True, text=True)
-            if result.returncode != 0:
-                print("Warning: open-webui not found. Install with: uv sync --extra webui")
-                return
-            openwebui_cmd = "open-webui"
-
-        # Find an available port starting from the configured WEBUI_PORT
-        webui_port = find_available_port(config.WEBUI_PORT)
-        print(f"Starting Open Web UI on port {webui_port}...")
-
-        # Set up environment variables for Open Web UI to auto-discover Ivan
-        env = os.environ.copy()
-        env["OPENAI_API_BASE_URLS"] = f"http://localhost:{port}/v1"
-        env["OPENAI_API_KEYS"] = "sk-ivan"  # Dummy key, not required by Ivan
-        env["DEFAULT_MODELS"] = config.IVAN_MODEL_NAME  # Set wwtfo/ivan as default model
-
-        # Set custom prompt suggestions for SE workflows
-        # Note: title must be an array of strings per Open Web UI docs
-        suggestions = json.dumps(
-            [
-                {
-                    "title": ["Draft follow-up", "after client meeting"],
-                    "content": "Help me draft a follow-up email after today's client meeting",
-                },
-                {
-                    "title": ["Weekly SE update", "status report"],
-                    "content": "Help me complete my weekly SE status update for this week",
-                },
-                {
-                    "title": ["WARMER assessment", "account evaluation"],
-                    "content": "Guide me through completing a WARMER assessment for my account",
-                },
-            ]
-        )
-        env["DEFAULT_PROMPT_SUGGESTIONS"] = suggestions
-
-        # Start open-webui
-        _webui_process = subprocess.Popen(
-            [openwebui_cmd, "serve", "--port", str(webui_port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
-        )
-
-        # Wait for Open Web UI to be ready
-        if wait_for_webui_ready(webui_port):
-            print(f"✓ Open Web UI ready at http://localhost:{webui_port}")
-            print(f"  Ivan endpoint auto-configured at http://localhost:{port}/v1")
-        else:
-            print(f"⚠ Open Web UI started but may not be ready yet at http://localhost:{webui_port}")
-            print(f"  Please wait a moment and try again if the page doesn't load")
-            print(f"  Ivan endpoint: http://localhost:{port}/v1")
-
-    except Exception as e:
-        print(f"Failed to start Open Web UI: {e}")
+    # Update the server's tools list with the dynamically created doc_search tool
+    if _server is not None:
+        _server.tools = get_all_tools()
 
 
 def signal_handler(sig, frame):
     """Handle shutdown signals."""
     print("\nShutting down Ivan...")
-    if _webui_process:
-        _webui_process.terminate()
-        _webui_process.wait()
     sys.exit(0)
 
 
 @click.command()
-@click.option("--port", default=config.DEFAULT_PORT, help="Port to run Ivan on")
+@click.option("--port", default=config.config.DEFAULT_PORT, help="Port to run Ivan on")
 @click.option(
-    "--backend", type=click.Choice(["ollama", "lmstudio", "gemini"]), default=config.BACKEND_TYPE, help="Backend to use"
+    "--backend", type=click.Choice(["ollama", "lmstudio"]), default=config.config.BACKEND_TYPE, help="Backend to use"
 )
-@click.option("--model", default=config.BACKEND_MODEL, help="Model name to use with backend")
+@click.option("--model", default=config.config.BACKEND_MODEL, help="Model name to use with backend")
 @click.option("--no-webui", is_flag=True, help="Don't start Open Web UI")
-@click.option("--rebuild-index", is_flag=True, help="Force rebuild of HashiCorp documentation index")
-@click.option("--force-scrape", is_flag=True, help="Clear page cache and re-scrape all pages (implies --rebuild-index)")
 @click.option("--debug", is_flag=True, help="Run in debug mode")
-def main(port: int, backend: str, model: str, no_webui: bool, rebuild_index: bool, force_scrape: bool, debug: bool):
+def main(port: int, backend: str, model: str, no_webui: bool, debug: bool):
     """Start Ivan chatbot server."""
-    # Update config
-    config.BACKEND_TYPE = backend
-    config.BACKEND_MODEL = model
+    global _server
+
+    # Update config with CLI options
+    config.config.BACKEND_TYPE = backend
+    config.config.BACKEND_MODEL = model
 
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    print(
-        f"""
-╭────────────────────────────────────╮
-│  Ivan - AI Assistant with Tools   │
-╰────────────────────────────────────╯
-
-Backend: {backend}
-Model: {model}
-Port: {port}
-API: http://localhost:{port}/v1
-"""
+    # Create server instance
+    _server = LLMServer(
+        name="Ivan",
+        model_name=config.config.MODEL_NAME,
+        tools=ALL_TOOLS,
+        config=config.config,
+        default_system_prompt="You are Ivan, a helpful AI assistant specializing in HashiCorp technologies.",
+        init_hook=initialize_ivan,
+        logger_names=["ivan.tools", "tools"],
     )
 
-    # Handle force-scrape flag
-    if force_scrape:
-        pages_dir = Path("./hashicorp_web_docs/pages")
-        if pages_dir.exists():
-            import shutil
-
-            print("\n🗑️  Clearing page cache for complete re-scrape...")
-            try:
-                shutil.rmtree(pages_dir)
-                print(f"✓ Deleted {pages_dir} - all pages will be re-scraped\n")
-            except Exception as e:
-                print(f"⚠️  Warning: Failed to delete page cache: {e}\n")
-        rebuild_index = True  # Force scrape implies rebuild
-
-    # Initialize HashiCorp web documentation search index
-    # This will automatically build/update the index if needed
-    print("Initializing HashiCorp documentation search...")
-    try:
-        initialize_doc_search(force_update=rebuild_index)
-        print("✓ Documentation search ready\n")
-    except Exception as e:
-        print(f"⚠️  Warning: Failed to initialize documentation search: {e}")
-        print("   Ivan will start without documentation search capability\n")
-
-    # Start Web UI if requested
-    if not no_webui:
-        start_webui(port)
-
-    # Start Flask app
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    # Run the server
+    _server.run(
+        port=port,
+        debug=debug,
+        start_webui=not no_webui,
+    )
 
 
 if __name__ == "__main__":

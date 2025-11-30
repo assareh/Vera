@@ -236,7 +236,10 @@ fi
 echo "📝 Disabling \"What's New\" changelog modal..."
 if [ -n "$APP_DIR" ] && [ -d "$APP_DIR" ]; then
     # Find and modify the JavaScript that controls the "What's New" setting
-    # The setting is typically stored as showChangelog or whatsNewModal
+    # The default pattern in Open WebUI is: showChangelog)??!0) meaning "default to true"
+    # We change it to: showChangelog)??!1) meaning "default to false"
+    find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/showChangelog)??!0)/showChangelog)??!1)/g' {} \;
+    # Also handle the case where it's stored directly as a property
     find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/showChangelog:!0/showChangelog:!1/g' {} \;
     find "$APP_DIR" -name "*.js" -type f -exec sed -i.bak 's/"whatsNew":true/"whatsNew":false/g' {} \;
     echo -e "${GREEN}✓ Changelog modal disabled${NC}"
@@ -246,7 +249,7 @@ echo ""
 echo -e "${GREEN}✅ HashiCorp branding applied successfully!${NC}"
 echo ""
 echo "Next steps:"
-echo "  1. Start Ivan: venv/bin/python3 ivan.py"
+echo "  1. Start Ivan: uv run python ivan.py"
 echo "  2. Visit http://localhost:8001"
 echo "  3. Hard refresh your browser (Cmd+Shift+R) to see the new branding"
 echo ""
