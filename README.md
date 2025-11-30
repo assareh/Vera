@@ -296,24 +296,11 @@ The branding assets are stored in the `branding/` directory and can be customize
 
 ### With Open Web UI
 
-1. Start Ivan: `python ivan.py`
+1. Start Ivan: `uv run python ivan.py`
 2. Open Web UI will automatically start on port 8001 (or port + 1)
 3. Access the Web UI at `http://localhost:8001`
 
-**First-time setup:**
-
-On your first visit, you'll see a HashiCorp-branded onboarding splash screen with phrases like "Accelerate innovation with Ivan AI" rotating in the background.
-
-1. Click "Get started" to proceed
-2. **Create a local admin account** by entering:
-   - Your name
-   - Email address
-   - Password (and confirmation)
-3. Click "Create Admin Account"
-
-**Important:** This account is stored locally on your machine only - it's just for accessing the Open Web UI interface and is not connected to any external service.
-
-Once logged in, the Web UI is pre-configured to use Ivan at `http://localhost:8000/v1` - no additional configuration needed!
+The Web UI is pre-configured to use Ivan at `http://localhost:8000/v1` - no login or additional configuration needed!
 
 ### With API Clients
 
